@@ -6,6 +6,7 @@ import HomePage from "@/pages/home";
 import ErrorPage from "@/pages/error";
 import LoginPage from "@/pages/login";
 import SignupPage from "@/pages/signup";
+import DashboardPage from "@/pages/dashboard";
 
 /* layouts */
 import RootLayout from "@/layouts/root";
@@ -24,6 +25,7 @@ export const routes: RouteObject[] = [
         Component: LoginPage,
       },
       { path: "/signup", Component: SignupPage },
+      { path: "/dashboard", Component: DashboardPage },
     ],
     Component: RootLayout,
     ErrorBoundary: ErrorPage,

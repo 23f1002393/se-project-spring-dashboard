@@ -20,7 +20,8 @@ import { loginFormSchema, type LoginFormSchema } from "@/lib/schemas/auth";
 /* react-hook-form */
 import { useZodResolver } from "@/hooks/use-zod-resolver";
 import { useForm, type SubmitHandler } from "react-hook-form";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { loginUser } from "@/actions/auth";
 
 export function LoginForm({
   className,
@@ -35,8 +36,23 @@ export function LoginForm({
     resolver,
   });
 
-  const onSubmit: SubmitHandler<LoginFormSchema> = ({ email, password }) => {
-    alert(JSON.stringify({ email, password }));
+  const navigate = useNavigate();
+
+  const onSubmit: SubmitHandler<LoginFormSchema> = async ({ email, password }) => {
+    try {
+      const response = await loginUser(email, password);
+      
+      if (response.success && response.user) {
+        localStorage.setItem("user", JSON.stringify(response.user));
+        // Also simulate storing token if needed
+        localStorage.setItem("token", response.token || "");
+        navigate("/dashboard");
+      } else {
+        alert(response.message || "Invalid login");
+      }
+    } catch (error) {
+      alert("An error occurred during login.");
+    }
   };
 
   return (
@@ -56,7 +72,7 @@ export function LoginForm({
                 <Input
                   id="email"
                   type="email"
-                  placeholder="m@example.com"
+                  placeholder="foreman@example.com (or try sales, qc, accounts, etc)"
                   {...register("email")}
                 />
                 {errors.email && (
