@@ -19,6 +19,10 @@ python app.py
 ```bash
 pytest test_pytest.py -s -v
 ```
+# For Swagger api Docs visit
+```bash
+localhost:5000/apidocs
+```
 # Running Client Site
 ```bash
 npm run dev
