@@ -15,6 +15,10 @@ close app.py
 python seed.py
 python app.py
 ```
+# Running Test Cases
+```bash
+python test_pytest.py
+```
 # Running Client Site
 ```bash
 npm run dev
