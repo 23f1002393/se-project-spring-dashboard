@@ -3,7 +3,13 @@
 git clone github.com/23f1002393/se-project-spring-dashboard.git
 cd se-project-spring-dashboard/client && npm install
 ```
-
+# Running Backend Server
+```bash
+cd server
+pip install -r requirements.txt
+python seed.py
+python app.py
+```
 # Running Client Site
 ```bash
 npm run dev
