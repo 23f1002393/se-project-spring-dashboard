@@ -7,6 +7,9 @@ cd se-project-spring-dashboard/client && npm install
 ```bash
 cd server
 pip install -r requirements.txt
+python app.py
+# to populate with dummy data
+Ctrl+c
 python seed.py
 python app.py
 ```
