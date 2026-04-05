@@ -35,6 +35,25 @@ paths:
         6.3)
       tags:
       - Analytics (Epic 6)
+  "/api/v1/customers":
+    get:
+      responses:
+        '200':
+          description: A list of customers
+          schema:
+            items:
+              properties:
+                company_name:
+                  type: string
+                customer_id:
+                  type: integer
+                name:
+                  type: string
+              type: object
+            type: array
+      summary: Retrieve a list of all customers
+      tags:
+      - Customers
   "/api/v1/enquiries":
     get:
       responses:
