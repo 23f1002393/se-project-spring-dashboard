@@ -140,56 +140,126 @@ def error_response(code, message, details=None):
     return response, code
 
 # API endpoints
+
+class CustomerListAPI(Resource):
+    def get(self):
+        """
+        Retrieve a list of all customers
+        ---
+        tags:
+          - Customers
+        responses:
+          200:
+            description: A list of customers
+            schema:
+              type: array
+              items:
+                type: object
+                properties:
+                  customer_id:
+                    type: integer
+                  name:
+                    type: string
+                  company_name:
+                    type: string
+        """
+        customers = Customer.query.all()
+        return [
+            {
+                "customer_id": c.customer_id, 
+                "name": c.name, 
+                "company_name": c.company_name
+            } for c in customers
+        ], 200
+
+
 #EPIC 1
 class EnquiryAPI(Resource):
-    def post(self):
+    def get(self):
         """
-        Create a new customer enquiry (User Story 1.1)
+        Fetch all customer enquiries
         ---
         tags:
           - Enquiries
-        parameters:
-          - in: body
-            name: body
-            required: true
-            schema:
-              type: object
-              required:
-                - customer_id
-              properties:
-                customer_id:
-                  type: integer
-                  example: 1
         responses:
-          201:
-            description: Enquiry created successfully
-          400:
-            description: Bad request (Missing data)
-          404:
-            description: Customer not found
+          200:
+            description: A list of all enquiries
+            schema:
+              type: array
+              items:
+                type: object
+                properties:
+                  enquiry_id:
+                    type: integer
+                  customer_id:
+                    type: integer
+                  status:
+                    type: string
+                  created_at:
+                    type: string
         """
+        enquiries = Enquiry.query.all()
+        return [
+            {
+                "enquiry_id": e.enquiry_id,
+                "customer_id": e.customer_id,
+                "status": e.status,
+                "created_at": e.created_at.strftime("%Y-%m-%d %H:%M:%S") if e.created_at else None
+            } for e in enquiries
+        ], 200
+
+    def post(self):
+        # ... (Keep your existing post method code here) ...
         data = request.get_json()
-        
         if 'customer_id' not in data:
             return error_response(400, "customer_id is required")
-            
         customer = Customer.query.get(data['customer_id'])
         if not customer:
             return error_response(404, f"Customer with ID {data['customer_id']} not found.")
-            
         new_enquiry = Enquiry(customer_id=data['customer_id'])
         db.session.add(new_enquiry)
         db.session.commit()
-        
         return {
             "message": "Enquiry created successfully", 
             "enquiry_id": new_enquiry.enquiry_id,
             "status": new_enquiry.status
         }, 201
-class QuotationAPI(Resource):
-    def post(self, enquiry_id):
+
+class EnquiryDetailAPI(Resource):
+    def get(self, enquiry_id):
         """
-        Generate a new quotation for an enquiry (User Story 1.3)
+        Fetch details of a specific enquiry by ID
+        ---
+        tags:
+          - Enquiries
+        parameters:
+          - name: enquiry_id
+            in: path
+            type: integer
+            required: true
+        responses:
+          200:
+            description: Detailed enquiry information
+          404:
+            description: Enquiry not found
+        """
+        enquiry = Enquiry.query.get(enquiry_id)
+        if not enquiry:
+            return error_response(404, f"Enquiry ID {enquiry_id} not found.")
+            
+        return {
+            "enquiry_id": enquiry.enquiry_id,
+            "customer_id": enquiry.customer_id,
+            "status": enquiry.status,
+            "created_at": enquiry.created_at.strftime("%Y-%m-%d %H:%M:%S") if enquiry.created_at else None
+        }, 200
+
+
+
+class QuotationAPI(Resource):
+    def get(self, enquiry_id):
+        """
+        Fetch all quotations for a specific enquiry
         ---
         tags:
           - Quotations
@@ -198,27 +268,9 @@ class QuotationAPI(Resource):
             in: path
             type: integer
             required: true
-            description: The ID of the enquiry being quoted
-          - in: body
-            name: body
-            required: true
-            schema:
-              type: object
-              required:
-                - price
-                - est_delivery
-              properties:
-                price:
-                  type: number
-                  format: float
-                  example: 1500.50
-                est_delivery:
-                  type: string
-                  format: date
-                  example: "2026-04-20"
         responses:
-          201:
-            description: Quotation generated successfully
+          200:
+            description: A list of quotations linked to the enquiry
           404:
             description: Enquiry not found
         """
@@ -226,29 +278,37 @@ class QuotationAPI(Resource):
         if not enquiry:
             return error_response(404, f"Enquiry ID {enquiry_id} not found.")
             
-        data = request.get_json()
+        quotations = Quotation.query.filter_by(enquiry_id=enquiry_id).all()
         
-        # Parse date string to datetime object
+        return [
+            {
+                "quote_id": q.quote_id,
+                "version_number": q.version_number,
+                "price": q.price,
+                "est_delivery": q.est_delivery.strftime("%Y-%m-%d") if q.est_delivery else None,
+                "is_accepted": q.is_accepted
+            } for q in quotations
+        ], 200
+
+    def post(self, enquiry_id):
+        # ... (Keep your existing post method code here) ...
+        enquiry = Enquiry.query.get(enquiry_id)
+        if not enquiry:
+            return error_response(404, f"Enquiry ID {enquiry_id} not found.")
+        data = request.get_json()
         try:
             est_delivery_date = datetime.strptime(data['est_delivery'], "%Y-%m-%d").date()
         except ValueError:
             return error_response(400, "Invalid date format. Use YYYY-MM-DD.")
-            
-        # Check if previous quotes exist to handle versioning implicitly, 
-        # though explicit revision endpoint is better (see below)
         new_quote = Quotation(
             enquiry_id=enquiry_id,
             version_number=1,
             price=data['price'],
             est_delivery=est_delivery_date
         )
-        
-        # Update Enquiry status
         enquiry.status = "Quoted"
-        
         db.session.add(new_quote)
         db.session.commit()
-        
         return {"message": "Quotation generated", "quote_id": new_quote.quote_id}, 201
 
 class QuotationReviseAPI(Resource):
@@ -904,8 +964,15 @@ class ProductionAnalyticsAPI(Resource):
             }
         }, 200
 
+
+
+# customer info
+api.add_resource(CustomerListAPI, '/api/v1/customers')
+
+
 # Epic 1 Route Registration
 api.add_resource(EnquiryAPI, '/api/v1/enquiries')
+api.add_resource(EnquiryDetailAPI, '/api/v1/enquiries/<int:enquiry_id>')
 api.add_resource(QuotationAPI, '/api/v1/enquiries/<int:enquiry_id>/quotations')
 api.add_resource(QuotationReviseAPI, '/api/v1/quotations/<int:quote_id>/revise')
 api.add_resource(QuotationAcceptAPI, '/api/v1/quotations/<int:quote_id>/accept')
@@ -926,7 +993,6 @@ api.add_resource(InvoicePaymentAPI, '/api/v1/invoices/<int:invoice_id>/pay')
 # Epic 5 Route Registration
 api.add_resource(ShipmentDispatchAPI, '/api/v1/orders/<int:order_id>/shipment')
 api.add_resource(ShipmentDeliveryAPI, '/api/v1/shipments/<int:shipment_id>/delivery')
-
 # Epic 6 Route Registration
 api.add_resource(FinancialAnalyticsAPI, '/api/v1/analytics/financials')
 api.add_resource(ProductionAnalyticsAPI, '/api/v1/analytics/production')
@@ -935,3 +1001,5 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
     app.run(debug=True)
+
+
