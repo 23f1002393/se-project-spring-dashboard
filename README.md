@@ -15,7 +15,7 @@ close app.py
 python seed.py
 python app.py
 ```
-# Running Test Cases
+# Running Test Cases for APIs
 ```bash
 pytest test_pytest.py -s -v
 ```
