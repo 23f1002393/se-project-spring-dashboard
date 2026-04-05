@@ -17,7 +17,7 @@ python app.py
 ```
 # Running Test Cases
 ```bash
-python test_pytest.py
+pytest test_pytest.py -s -v
 ```
 # Running Client Site
 ```bash
