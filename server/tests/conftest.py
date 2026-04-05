@@ -1,9 +1,5 @@
 import pytest
 import json
-import os
-import sys
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from app import app
 from models import (
@@ -22,6 +18,11 @@ import warnings
 from sqlalchemy.exc import LegacyAPIWarning
 
 warnings.filterwarnings("ignore", category=LegacyAPIWarning)
+
+# Bind the db from models.py to the app explicitly so the models work.
+if "sqlalchemy" in app.extensions:
+    del app.extensions["sqlalchemy"]
+db.init_app(app)
 
 
 @pytest.fixture

@@ -1,0 +1,16 @@
+# Python bytecode and cache files
+**/__pycache__/
+# Environment variables
+.env*
+!.env.example
+# Database files
+instance/
+*.db
+*.sqlite
+# UV and poetry configuration files
+pyproject.toml
+poetry.lock
+uv.lock
+# Pytest cache and reports
+.pytest_cache/
+.venv
