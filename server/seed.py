@@ -1,239 +1,75 @@
-import pytest
-import json
 from app import app, db, Customer, Enquiry, Quotation, SpringMaster, Order, Machine, Material, ProductionTask, QualityReport, Invoice, Shipment
+from datetime import datetime, timedelta
 
-# ==========================================
-# 1. Output Formatter Helper
-# ==========================================
-def print_test_case(test_num, name, url, method, req_json, exp_status, expected_dict, actual_status, actual_response_dict):
-    """Formats and prints the test output exactly as requested."""
-    actual_json_str = json.dumps(actual_response_dict)
-    exp_json_str = json.dumps(expected_dict)
-    
-    print(f"\nTest Case {test_num}: {name}")
-    print(f"Page being tested: {url}")
-    print("Inputs:")
-    print(f"    - Request Method: {method}")
-    if req_json:
-        print(f"    - JSON: {req_json}")
-    print("    - Header: Content-Type: application/json")
-    print("Expected Output:")
-    print(f"    - HTTP Status Code: {exp_status}")
-    print(f"    - JSON: {exp_json_str}")
-    print("Actual Output:")
-    print(f"    - HTTP Status Code: {actual_status}")
-    print(f"    - JSON: {actual_json_str}")
-    
-    if actual_status == exp_status:
-        print("Result: Success")
-    else:
-        print("Result: Failed")
-    print("-" * 70)
+def seed_database():
+    with app.app_context():
+        # 1. Clear existing data (Drops all tables and recreates them empty)
+        print("Dropping existing tables...")
+        db.drop_all()
+        print("Creating fresh tables...")
+        db.create_all()
 
-# ==========================================
-# 2. Pytest Fixtures (Setup & Teardown)
-# ==========================================
-@pytest.fixture
-def client():
-    app.config['TESTING'] = True
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
-    
-    with app.test_client() as client:
-        with app.app_context():
-            db.create_all()
-            yield client
-            db.drop_all()
+        print("Populating database with fake data...")
 
-@pytest.fixture
-def init_database():
-    """Populates the database with necessary baseline data to support all 16 tests."""
-    customer = Customer(name="Acme Corp", email="contact@acme.com", company_name="Acme Tractors")
-    spring = SpringMaster(part_number="SP-100", wire_diameter=2.0)
-    material = Material(name="Steel Wire", stock_quantity=100.0)
-    machine = Machine(name="Coiler 1", type="Coiling", status="Active")
-    db.session.add_all([customer, spring, material, machine])
-    db.session.commit()
+        # 2. Add Customers
+        c1 = Customer(name="John Doe", email="john@acmetractors.com", phone="555-0101", company_name="Acme Tractors")
+        c2 = Customer(name="Jane Smith", email="jane@globalauto.com", phone="555-0202", company_name="Global AutoParts")
+        db.session.add_all([c1, c2])
+        db.session.commit()
 
-    # Pre-existing Enquiry (ID 1)
-    enquiry = Enquiry(customer_id=1, status="Quoted")
-    db.session.add(enquiry)
-    db.session.commit()
+        # 3. Add Master Data (Springs, Machines, Materials)
+        s1 = SpringMaster(part_number="COMP-101", wire_diameter=2.5, material_spec="Stainless Steel 304")
+        s2 = SpringMaster(part_number="EXT-202", wire_diameter=1.2, material_spec="High Carbon Steel")
+        
+        m1 = Machine(name="CNC Coiler A", type="Coiling", status="Active")
+        m2 = Machine(name="Grinder B", type="Grinding", status="Active")
+        
+        mat1 = Material(name="SS-304 Wire", specification="2.5mm roll", stock_quantity=500.0)
+        mat2 = Material(name="HC Steel Wire", specification="1.2mm roll", stock_quantity=150.0) # Low stock
+        
+        db.session.add_all([s1, s2, m1, m2, mat1, mat2])
+        db.session.commit()
 
-    # Pre-existing Quote (ID 1)
-    quote = Quotation(enquiry_id=1, version_number=1, price=1500.0, is_accepted=False)
-    db.session.add(quote)
-    db.session.commit()
+        # 4. Add Enquiries & Quotations
+        # Enquiry 1: Fully processed into an Order
+        enq1 = Enquiry(customer_id=c1.customer_id, status="Order Confirmed", created_at=datetime.utcnow() - timedelta(days=10))
+        db.session.add(enq1)
+        db.session.commit()
 
-    # Order ready for Invoicing (Order 1)
-    order1 = Order(quote_id=1, spring_id=1, production_status="Quality Approved - Ready for Billing")
-    db.session.add(order1)
-    db.session.commit()
+        quote1 = Quotation(enquiry_id=enq1.enquiry_id, version_number=1, price=2500.00, est_delivery=datetime.utcnow().date() + timedelta(days=5), is_accepted=True)
+        db.session.add(quote1)
+        db.session.commit()
 
-    # Order ready for Shipment (Order 2)
-    order2 = Order(quote_id=1, spring_id=1, production_status="Invoiced - Pending Dispatch")
-    invoice = Invoice(order_id=2, amount=1500.0, paid=False)
-    db.session.add_all([order2, invoice])
-    db.session.commit()
+        # Enquiry 2: Still pending
+        enq2 = Enquiry(customer_id=c2.customer_id, status="Pending", created_at=datetime.utcnow() - timedelta(days=2))
+        db.session.add(enq2)
+        db.session.commit()
 
-    # Shipment ready for Delivery (Shipment 1)
-    shipment = Shipment(order_id=2, carrier="FedEx", tracking_number="TRK123")
-    db.session.add(shipment)
-    db.session.commit()
+        # 5. Add Orders & Production Tasks
+        order1 = Order(quote_id=quote1.quote_id, spring_id=s1.spring_id, production_status="Quality Approved - Ready for Billing")
+        db.session.add(order1)
+        db.session.commit()
 
-# ==========================================
-# 3. All API Test Cases (Epic 1 to Epic 6)
-# ==========================================
+        task1 = ProductionTask(order_id=order1.order_id, machine_id=m1.machine_id, material_id=mat1.material_id, status="Completed", scheduled_at=datetime.utcnow() - timedelta(days=8), completed_at=datetime.utcnow() - timedelta(days=7))
+        task2 = ProductionTask(order_id=order1.order_id, machine_id=m2.machine_id, material_id=mat1.material_id, status="Completed", scheduled_at=datetime.utcnow() - timedelta(days=6), completed_at=datetime.utcnow() - timedelta(days=5))
+        db.session.add_all([task1, task2])
+        db.session.commit()
 
-def test_01_get_customers(client, init_database):
-    url = "http://127.0.0.1:5000/api/v1/customers"
-    response = client.get('/api/v1/customers')
-    actual = response.get_json()
-    expected = [{"customer_id": 1, "name": "Acme Corp", "company_name": "Acme Tractors"}]
-    print_test_case(1, "Retrieve Customer List", url, "GET", None, 200, expected, response.status_code, actual)
-    assert response.status_code == 200
+        # 6. Add Quality Reports
+        qr1 = QualityReport(task_id=task2.task_id, inspector="Mike Foreman", result="Approved", report_date=datetime.utcnow() - timedelta(days=4))
+        db.session.add(qr1)
+        db.session.commit()
 
-def test_02_create_enquiry(client, init_database):
-    url = "http://127.0.0.1:5000/api/v1/enquiries"
-    payload = {"customer_id": 1}
-    response = client.post('/api/v1/enquiries', json=payload)
-    actual = response.get_json()
-    expected = {"message": "Enquiry created successfully", "enquiry_id": 2, "status": "New"}
-    print_test_case(2, "Create a New Enquiry", url, "POST", json.dumps(payload), 201, expected, response.status_code, actual)
-    assert response.status_code == 201
+        # 7. Add Invoices (One paid, one pending for analytics)
+        inv1 = Invoice(order_id=order1.order_id, amount=2500.00, issued_date=datetime.utcnow().date() - timedelta(days=3), paid=True)
+        
+        # Fake a second disconnected invoice just to give the Analytics dashboard some "Pending" data
+        inv2 = Invoice(order_id=order1.order_id, amount=1200.50, issued_date=datetime.utcnow().date(), paid=False)
+        
+        db.session.add_all([inv1, inv2])
+        db.session.commit()
 
-def test_03_generate_quotation(client, init_database):
-    url = "http://127.0.0.1:5000/api/v1/enquiries/2/quotations"
-    payload = {"price": 1200.50, "est_delivery": "2026-05-15"}
-    response = client.post('/api/v1/enquiries/2/quotations', json=payload)
-    actual = response.get_json()
-    expected = {"message": "Quotation generated", "quote_id": 2}
-    print_test_case(3, "Generate Quotation", url, "POST", json.dumps(payload), 201, expected, response.status_code, actual)
-    assert response.status_code == 201
+        print("✅ Success! Database 'spring_plm.db' is now populated with fake data.")
 
-def test_04_revise_quotation(client, init_database):
-    url = "http://127.0.0.1:5000/api/v1/quotations/1/revise"
-    payload = {"price": 1400.00}
-    response = client.post('/api/v1/quotations/1/revise', json=payload)
-    actual = response.get_json()
-    expected = {"message": "Quotation revised to version 2", "new_quote_id": 3}
-    print_test_case(4, "Revise Quotation", url, "POST", json.dumps(payload), 201, expected, response.status_code, actual)
-    assert response.status_code == 201
-
-def test_05_accept_quotation(client, init_database):
-    url = "http://127.0.0.1:5000/api/v1/quotations/1/accept"
-    payload = {"spring_id": 1}
-    response = client.post('/api/v1/quotations/1/accept', json=payload)
-    actual = response.get_json()
-    expected = {"message": "Quotation accepted and Order confirmed", "order_id": 3}
-    print_test_case(5, "Accept Quotation (Create Order)", url, "POST", json.dumps(payload), 201, expected, response.status_code, actual)
-    assert response.status_code == 201
-
-def test_06_get_materials(client, init_database):
-    url = "http://127.0.0.1:5000/api/v1/materials"
-    response = client.get('/api/v1/materials')
-    actual = response.get_json()
-    expected = [{"material_id": 1, "name": "Steel Wire", "specification": None, "stock_quantity": 100.0}]
-    print_test_case(6, "Check Material Inventory", url, "GET", None, 200, expected, response.status_code, actual)
-    assert response.status_code == 200
-
-def test_07_schedule_task(client, init_database):
-    url = "http://127.0.0.1:5000/api/v1/tasks"
-    payload = {"order_id": 3, "machine_id": 1, "material_id": 1, "scheduled_at": "2026-05-01T10:00:00", "material_required": 20.0}
-    response = client.post('/api/v1/tasks', json=payload)
-    actual = response.get_json()
-    expected = {"message": "Production task scheduled and materials reserved", "task_id": 1}
-    print_test_case(7, "Schedule Task (Epic 2)", url, "POST", json.dumps(payload), 201, expected, response.status_code, actual)
-    assert response.status_code == 201
-
-def test_08_update_task_status(client, init_database):
-    # Setup: Call schedule task to ensure task 1 exists
-    client.post('/api/v1/tasks', json={"order_id": 3, "machine_id": 1, "material_id": 1, "scheduled_at": "2026-05-01T10:00:00", "material_required": 10.0})
-    
-    url = "http://127.0.0.1:5000/api/v1/tasks/1/status"
-    payload = {"status": "In Progress"}
-    response = client.put('/api/v1/tasks/1/status', json=payload)
-    actual = response.get_json()
-    expected = {"message": "Task status updated to In Progress"}
-    print_test_case(8, "Update Production Progress", url, "PUT", json.dumps(payload), 200, expected, response.status_code, actual)
-    assert response.status_code == 200
-
-def test_09_quality_control(client, init_database):
-    # Ensure task 1 exists
-    client.post('/api/v1/tasks', json={"order_id": 3, "machine_id": 1, "material_id": 1, "scheduled_at": "2026-05-01T10:00:00", "material_required": 10.0})
-    
-    url = "http://127.0.0.1:5000/api/v1/tasks/1/quality"
-    payload = {"inspector": "Mike Foreman", "result": "Approved"}
-    response = client.post('/api/v1/tasks/1/quality', json=payload)
-    actual = response.get_json()
-    expected = {"message": "Quality report recorded: Approved", "report_id": 1}
-    print_test_case(9, "Submit Quality Report", url, "POST", json.dumps(payload), 201, expected, response.status_code, actual)
-    assert response.status_code == 201
-
-def test_10_generate_invoice(client, init_database):
-    url = "http://127.0.0.1:5000/api/v1/orders/1/invoice"
-    payload = {"manual_amount": 1050.0}
-    response = client.post('/api/v1/orders/1/invoice', json=payload)
-    actual = response.get_json()
-    expected = {"message": "Invoice generated successfully", "invoice_id": 2, "amount": 1050.0}
-    print_test_case(10, "Generate Invoice for Order", url, "POST", json.dumps(payload), 201, expected, response.status_code, actual)
-    assert response.status_code == 201
-
-def test_11_pay_invoice(client, init_database):
-    url = "http://127.0.0.1:5000/api/v1/invoices/1/pay"
-    response = client.put('/api/v1/invoices/1/pay')
-    actual = response.get_json()
-    expected = {"message": "Invoice successfully marked as paid"}
-    print_test_case(11, "Mark Invoice as Paid", url, "PUT", None, 200, expected, response.status_code, actual)
-    assert response.status_code == 200
-
-def test_12_dispatch_shipment(client, init_database):
-    url = "http://127.0.0.1:5000/api/v1/orders/2/shipment"
-    payload = {"carrier": "UPS", "tracking_number": "UPS987654"}
-    response = client.post('/api/v1/orders/2/shipment', json=payload)
-    actual = response.get_json()
-    expected = {"message": "Order dispatched", "shipment_id": 2} # ID 2 because fixture has shipment 1
-    print_test_case(12, "Dispatch Shipment", url, "POST", json.dumps(payload), 201, expected, response.status_code, actual)
-    assert response.status_code == 201
-
-def test_13_record_delivery(client, init_database):
-    url = "http://127.0.0.1:5000/api/v1/shipments/1/delivery"
-    payload = {"delivery_status": "Delivered & Accepted"}
-    response = client.put('/api/v1/shipments/1/delivery', json=payload)
-    actual = response.get_json()
-    expected = {"message": "Delivery updated: Delivered & Accepted"}
-    print_test_case(13, "Record Delivery Status", url, "PUT", json.dumps(payload), 200, expected, response.status_code, actual)
-    assert response.status_code == 200
-
-def test_14_financial_analytics(client, init_database):
-    # Note: Fixture creates 1 unpaid invoice for $1500. We just paid it in test_11 logic, but fixtures reset per test!
-    url = "http://127.0.0.1:5000/api/v1/analytics/financials"
-    response = client.get('/api/v1/analytics/financials')
-    actual = response.get_json()
-    expected = {
-        "metrics": {"total_revenue": 1500.0, "collected_revenue": 0.0, "pending_revenue": 1500.0},
-        "chart_data": {"labels": ["Collected Revenue", "Pending Revenue"], "series": [0.0, 1500.0]}
-    }
-    print_test_case(14, "Get Financial Analytics", url, "GET", None, 200, expected, response.status_code, actual)
-    assert response.status_code == 200
-
-def test_15_production_analytics(client, init_database):
-    url = "http://127.0.0.1:5000/api/v1/analytics/production"
-    response = client.get('/api/v1/analytics/production')
-    actual = response.get_json()
-    
-    # We expect our 2 fixture orders in the pipeline breakdown
-    expected = {
-        "machine_utilization": {"chart_type": "bar", "labels": [], "data": []},
-        "production_pipeline": {"chart_type": "pie", "data": {"Invoiced - Pending Dispatch": 1, "Quality Approved - Ready for Billing": 1}}
-    }
-    print_test_case(15, "Get Production Analytics", url, "GET", None, 200, expected, response.status_code, actual)
-    assert response.status_code == 200
-
-def test_16_validation_failure(client, init_database):
-    url = "http://127.0.0.1:5000/api/v1/orders/3/invoice"
-    # Order 3 does not exist in fixture, should return 404
-    response = client.post('/api/v1/orders/3/invoice', json={})
-    actual = response.get_json()
-    expected = {"error": {"code": 404, "message": "Order ID 3 not found"}}
-    print_test_case(16, "Validation Check (Not Found)", url, "POST", "{}", 404, expected, response.status_code, actual)
-    assert response.status_code == 404
+if __name__ == '__main__':
+    seed_database()
