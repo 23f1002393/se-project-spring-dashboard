@@ -7,6 +7,28 @@ from models import ProductionTask, Material, QualityReport, Order, db
 
 
 class ProductionTaskAPI(Resource):
+    def get(self):
+        """
+        Fetch all production tasks
+        ---
+        tags:
+          - Production Planning (Epic 2)
+        responses:
+          200:
+            description: A list of all tasks
+        """
+        tasks = ProductionTask.query.all()
+        return [
+            {
+                "id": t.task_id,
+                "order_id": t.order_id,
+                "machine_id": t.machine_id,
+                "status": t.status,
+                "progress": t.progress,
+            }
+            for t in tasks
+        ], 200
+
     def post(self):
         """
         Schedule a production task and reserve materials (User Stories 2.1, 2.4)

@@ -41,8 +41,15 @@ class FinancialAnalyticsAPI(Resource):
 
         # Note: In a full system, 'Cost' would be calculated by multiplying Material Used * Material Cost.
         # For this milestone, we are returning the primary revenue data ready for frontend Pie/Bar charts.
+        
+        # Calculate invoice count
+        invoices_count = db.session.query(func.count(Invoice.invoice_id)).scalar() or 0
 
         return {
+            "total_revenue": round(total_rev, 2),
+            "total_cost": round(total_rev * 0.7, 2),  # Mock cost
+            "total_profit": round(total_rev * 0.3, 2),  # Mock profit
+            "invoices_count": invoices_count,
             "metrics": {
                 "total_revenue": round(total_rev, 2),
                 "collected_revenue": round(collected_rev, 2),
@@ -94,7 +101,17 @@ class ProductionAnalyticsAPI(Resource):
 
         pipeline_status = {row.production_status: row.count for row in status_query}
 
+        # Calculate counts for dashboard
+        total_tasks = db.session.query(func.count(ProductionTask.task_id)).scalar() or 0
+        completed_tasks = db.session.query(func.count(ProductionTask.task_id)).filter(ProductionTask.status == "Completed").scalar() or 0
+        in_progress_tasks = db.session.query(func.count(ProductionTask.task_id)).filter(ProductionTask.status == "In Progress").scalar() or 0
+        pending_qc = db.session.query(func.count(ProductionTask.task_id)).filter(ProductionTask.status == "Pending QC").scalar() or 0
+
         return {
+            "total_tasks": total_tasks,
+            "completed_tasks": completed_tasks,
+            "in_progress_tasks": in_progress_tasks,
+            "pending_qc": pending_qc,
             "machine_utilization": {
                 "chart_type": "bar",
                 "labels": machine_labels,
