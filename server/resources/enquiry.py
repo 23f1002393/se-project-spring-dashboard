@@ -33,8 +33,10 @@ class EnquiryAPI(Resource):
         enquiries = Enquiry.query.all()
         return [
             {
-                "enquiry_id": e.enquiry_id,
+                "id": e.enquiry_id,
                 "customer_id": e.customer_id,
+                "product_spec": e.product_spec,
+                "quantity": e.quantity,
                 "status": e.status,
                 "created_at": e.created_at.strftime("%Y-%m-%d %H:%M:%S")
                 if e.created_at

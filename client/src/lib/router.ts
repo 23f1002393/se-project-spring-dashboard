@@ -1,34 +1,23 @@
-/* react-router-dom */
 import { createBrowserRouter, type RouteObject } from "react-router-dom";
 
-/* pages */
-import HomePage from "@/pages/home";
-import ErrorPage from "@/pages/error";
-import LoginPage from "@/pages/login";
-import SignupPage from "@/pages/signup";
-import DashboardPage from "@/pages/dashboard";
-
-/* layouts */
-import RootLayout from "@/layouts/root";
+import Home from "@/pages/home";
+import Login from "@/pages/login";
+import Signup from "@/pages/signup";
+import ManagerDashboard from "@/pages/manager-dashboard";
+import CustomerDashboard from "@/pages/customer-dashboard";
+import RootLayout from "@/root-layout";
 
 export const routes: RouteObject[] = [
   {
     path: "/",
-    children: [
-      {
-        path: "/",
-        index: true,
-        Component: HomePage,
-      },
-      {
-        path: "/login",
-        Component: LoginPage,
-      },
-      { path: "/signup", Component: SignupPage },
-      { path: "/dashboard", Component: DashboardPage },
-    ],
     Component: RootLayout,
-    ErrorBoundary: ErrorPage,
+    children: [
+      { index: true, Component: Home },
+      { path: "/login", Component: Login },
+      { path: "/signup", Component: Signup },
+      { path: "/manager", Component: ManagerDashboard },
+      { path: "/customer", Component: CustomerDashboard },
+    ],
   },
 ];
 

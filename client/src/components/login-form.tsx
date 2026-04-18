@@ -1,4 +1,8 @@
-/* components */
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,47 +15,54 @@ import {
 import {
   Field,
   FieldDescription,
+  FieldError,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-/* validation schema */
-import { loginFormSchema, type LoginFormSchema } from "@/lib/schemas/auth";
-/* react-hook-form */
-import { useZodResolver } from "@/hooks/use-zod-resolver";
-import { useForm, type SubmitHandler } from "react-hook-form";
-import { Link, useNavigate } from "react-router-dom";
-import { loginUser } from "@/actions/auth";
+import { login } from "@/lib/actions/auth";
+import { useAppDispatch } from "@/lib/hooks";
+import { setUser } from "@/lib/features/user/userSlice";
+
+const loginSchema = z.object({
+  email: z.email({ message: "Invalid email address" }),
+  password: z
+    .string()
+    .min(8, { message: "Password must be at least 8 characters" }),
+});
+
+type LoginValues = z.infer<typeof loginSchema>;
 
 export function LoginForm({
   className,
   ...props
 }: React.ComponentProps<"div">) {
-  const resolver = useZodResolver<LoginFormSchema>(loginFormSchema);
-  const {
-    register,
-    formState: { errors },
-    handleSubmit,
-  } = useForm<LoginFormSchema>({
-    resolver,
-  });
-
+  const [error, setError] = useState<string | null>(null);
+  const dispatch = useAppDispatch();
   const navigate = useNavigate();
 
-  const onSubmit: SubmitHandler<LoginFormSchema> = async ({ email, password }) => {
-    try {
-      const response = await loginUser(email, password);
-      
-      if (response.success && response.user) {
-        localStorage.setItem("user", JSON.stringify(response.user));
-        // Also simulate storing token if needed
-        localStorage.setItem("token", response.token || "");
-        navigate("/dashboard");
-      } else {
-        alert(response.message || "Invalid login");
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+  } = useForm<LoginValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: {
+      email: "",
+      password: "",
+    },
+  });
+
+  const onSubmit = async (data: LoginValues) => {
+    setError(null);
+    const result = await login(data);
+    if (!result.success && result.error) {
+      setError(result.error);
+    } else {
+      if (result.user) {
+        dispatch(setUser(result.user));
       }
-    } catch (error) {
-      alert("An error occurred during login.");
+      navigate("/");
     }
   };
 
@@ -72,11 +83,11 @@ export function LoginForm({
                 <Input
                   id="email"
                   type="email"
-                  placeholder="foreman@example.com (or try sales, qc, accounts, etc)"
+                  placeholder="m@example.com"
                   {...register("email")}
                 />
                 {errors.email && (
-                  <div className="text-red-500">{errors.email.message}</div>
+                  <FieldError>{errors.email.message}</FieldError>
                 )}
               </Field>
               <Field>
@@ -95,16 +106,19 @@ export function LoginForm({
                   {...register("password")}
                 />
                 {errors.password && (
-                  <div className="text-red-500">{errors.password.message}</div>
+                  <FieldError>{errors.password.message}</FieldError>
                 )}
               </Field>
+              {error && <FieldError>{error}</FieldError>}
               <Field>
-                <Button type="submit">Login</Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? "Logging in..." : "Login"}
+                </Button>
                 <Button variant="outline" type="button">
                   Login with Google
                 </Button>
                 <FieldDescription className="text-center">
-                  Don&apos;t have an account? <Link to="/signup">Sign up</Link>
+                  Don&apos;t have an account? <a href="/signup">Sign up</a>
                 </FieldDescription>
               </Field>
             </FieldGroup>

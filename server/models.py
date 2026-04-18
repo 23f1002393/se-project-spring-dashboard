@@ -1,5 +1,6 @@
 from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
 
 db = SQLAlchemy()
 
@@ -7,9 +8,35 @@ db = SQLAlchemy()
 # Initialize the database with the Flask app
 def init_app_db(app):
     db.init_app(app)
+    with app.app_context():
+        db.create_all()
 
 
 # --- MODELS ---
+
+
+class User(db.Model):
+    __tablename__ = "users"
+    user_id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    email = db.Column(db.String(100), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+    role = db.Column(db.String(50), default="customer")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+    def to_dict(self):
+        return {
+            "user_id": self.user_id,
+            "name": self.name,
+            "email": self.email,
+            "role": self.role,
+        }
 
 
 class Customer(db.Model):
@@ -28,6 +55,8 @@ class Enquiry(db.Model):
     __tablename__ = "enquiries"
     enquiry_id = db.Column(db.Integer, primary_key=True)
     customer_id = db.Column(db.Integer, db.ForeignKey("customers.customer_id"))
+    product_spec = db.Column(db.String(255))
+    quantity = db.Column(db.Integer)
     status = db.Column(db.String(50), default="New")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -95,6 +124,7 @@ class ProductionTask(db.Model):
     machine_id = db.Column(db.Integer, db.ForeignKey("machines.machine_id"))
     material_id = db.Column(db.Integer, db.ForeignKey("materials.material_id"))
     status = db.Column(db.String(50), default="Scheduled")
+    progress = db.Column(db.Integer, default=0)
     scheduled_at = db.Column(db.DateTime)
     completed_at = db.Column(db.DateTime)
 

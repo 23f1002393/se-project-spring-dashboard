@@ -14,3 +14,4 @@ uv.lock
 # Pytest cache and reports
 .pytest_cache/
 .venv
+*.md

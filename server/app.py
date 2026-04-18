@@ -1,9 +1,9 @@
 from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
 from flask_restful import Api
 from flasgger import Swagger
 
 from resources.analytics import FinancialAnalyticsAPI, ProductionAnalyticsAPI
+from resources.auth import UserRegistrationAPI, UserLoginAPI, UserLogoutAPI
 from resources.customer import CustomerListAPI
 from resources.enquiry import EnquiryAPI, EnquiryDetailAPI
 from resources.invoice import InvoiceAPI, InvoicePaymentAPI
@@ -13,17 +13,33 @@ from resources.quotation import QuotationAPI, QuotationReviseAPI, QuotationAccep
 from resources.shipment import ShipmentDispatchAPI, ShipmentDeliveryAPI
 from resources.tasks import ProductionTaskAPI, TaskStatusUpdateAPI, QualityReportAPI
 
+from models import init_app_db
+from flask_cors import CORS
+
+import os
+from dotenv import load_dotenv, find_dotenv
+
+load_dotenv(find_dotenv())
+
 # Initialize App
 app = Flask(__name__)
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///spring_plm.db"
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("SQLALCHEMY_DATABASE_URI")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY")
 app.config["SWAGGER"] = {"title": "Spring Manufacturing PLM API", "uiversion": 3}
 
-db = SQLAlchemy(app)
+init_app_db(app)
+
 api = Api(app)
+cors = CORS(app)
 swagger = Swagger(app)
 
 # --- API ENDPOINTS --- #
+
+# Auth
+api.add_resource(UserLoginAPI, "/api/v1/auth/login")
+api.add_resource(UserLogoutAPI, "/api/v1/auth/logout")
+api.add_resource(UserRegistrationAPI, "/api/v1/auth/register")
 
 # customer info
 api.add_resource(CustomerListAPI, "/api/v1/customers")
@@ -57,6 +73,4 @@ api.add_resource(FinancialAnalyticsAPI, "/api/v1/analytics/financials")
 api.add_resource(ProductionAnalyticsAPI, "/api/v1/analytics/production")
 
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
-    app.run(debug=True)
+    app.run(debug=False)
