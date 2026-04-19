@@ -87,6 +87,19 @@ def seed_database():
         m3 = Machine(name="Grinder 1", type="Grinding", status="Operational")
         m4 = Machine(name="Shot Peener 1", type="Shot Peening", status="Maintenance")
 
+        now = dt.datetime.now(dt.timezone.utc)
+        m1.maintenance_threshold = 12000
+        m1.maintenance_warning_threshold = 9000
+        m1.last_maintenance_at = now - dt.timedelta(days=30)
+
+        m2.maintenance_threshold = 8000
+        m2.maintenance_warning_threshold = 6000
+        m2.last_maintenance_at = now - dt.timedelta(days=15)
+
+        m3.maintenance_threshold = 10000
+        m3.maintenance_warning_threshold = 8000
+        m3.last_maintenance_at = now - dt.timedelta(days=45)
+
         mat1 = Material(
             name="SS Wire 2.0mm", specification="SS304", stock_quantity=1000.0
         )
@@ -103,8 +116,6 @@ def seed_database():
         db.session.commit()
 
         # 4. Enquiry & Quotation Flow
-        now = dt.datetime.now(dt.timezone.utc)
-
         # Scenario 1: Completed Lifecycle
         enq1 = Enquiry(
             customer_id=c1.user_id,
@@ -199,6 +210,7 @@ def seed_database():
             material_id=mat1.material_id,
             status="Completed",
             progress=100,
+            estimated_springs_produced=11500,
             scheduled_at=now - dt.timedelta(days=18),
             deadline=now - dt.timedelta(days=15),
             completed_at=now - dt.timedelta(days=16),
@@ -209,6 +221,7 @@ def seed_database():
             material_id=mat2.material_id,
             status="In Progress",
             progress=45,
+            estimated_springs_produced=2000,
             scheduled_at=now - dt.timedelta(days=2),
             deadline=now + dt.timedelta(days=5),
         )

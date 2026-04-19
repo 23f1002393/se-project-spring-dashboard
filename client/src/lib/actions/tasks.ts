@@ -4,8 +4,10 @@ export interface ProductionTask {
   id: number | string;
   order_id: number | string;
   machine_id: number | string;
+  machine_name?: string | null;
   status: string;
   progress?: number;
+  estimated_springs_produced?: number;
 }
 
 /**

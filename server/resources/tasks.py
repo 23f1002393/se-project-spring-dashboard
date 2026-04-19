@@ -23,8 +23,10 @@ class ProductionTaskAPI(Resource):
                 "id": t.task_id,
                 "order_id": t.order_id,
                 "machine_id": t.machine_id,
+                "machine_name": t.machine.name if t.machine else None,
                 "status": t.status,
                 "progress": t.progress,
+                "estimated_springs_produced": t.estimated_springs_produced,
             }
             for t in tasks
         ], 200
@@ -61,6 +63,10 @@ class ProductionTaskAPI(Resource):
                 material_required:
                   type: number
                   description: Amount of material to reserve/deduct
+                estimated_springs_produced:
+                  type: integer
+                  description: Expected number of springs this task will produce, used for maintenance planning
+                  example: 2500
         responses:
           201:
             description: Task scheduled successfully
@@ -109,6 +115,7 @@ class ProductionTaskAPI(Resource):
             machine_id=data["machine_id"],
             material_id=data["material_id"],
             status="Scheduled",
+            estimated_springs_produced=data.get("estimated_springs_produced", 0),
             scheduled_at=scheduled_date,
         )
 
