@@ -1,42 +1,20 @@
-import json
+import pytest
 
-def test_12_dispatch_shipment(client, init_database, print_test_case):
-    url = "http://127.0.0.1:5000/api/v1/orders/2/shipment"
-    payload = {"carrier": "UPS", "tracking_number": "UPS987654"}
-    response = client.post("/api/v1/orders/2/shipment", json=payload)
-    actual = response.get_json()
-    expected = {
-        "message": "Order dispatched",
-        "shipment_id": 2,
-    }  # ID 2 because fixture has shipment 1
-    print_test_case(
-        12,
-        "Dispatch Shipment",
-        url,
-        "POST",
-        json.dumps(payload),
-        201,
-        expected,
-        response.status_code,
-        actual,
-    )
+def test_shipment_dispatch(client, init_database):
+    """Test dispatching an order (Order 2 is already invoiced in init_database)"""
+    response = client.post("/api/v1/orders/2/shipment", json={
+        "carrier": "DHL Express",
+        "tracking_number": "DHL-123456"
+    })
     assert response.status_code == 201
+    data = response.get_json()
+    assert "shipment_id" in data
 
-def test_13_record_delivery(client, init_database, print_test_case):
-    url = "http://127.0.0.1:5000/api/v1/shipments/1/delivery"
-    payload = {"delivery_status": "Delivered & Accepted"}
-    response = client.put("/api/v1/shipments/1/delivery", json=payload)
-    actual = response.get_json()
-    expected = {"message": "Delivery updated: Delivered & Accepted"}
-    print_test_case(
-        13,
-        "Record Delivery Status",
-        url,
-        "PUT",
-        json.dumps(payload),
-        200,
-        expected,
-        response.status_code,
-        actual,
-    )
+def test_delivery_update_and_feedback(client, init_database):
+    """Test updating delivery status and providing feedback"""
+    response = client.put("/api/v1/shipments/1/delivery", json={
+        "delivery_status": "Delivered & Accepted",
+        "customer_feedback": "Excellent quality, arrived early."
+    })
     assert response.status_code == 200
+    assert response.get_json()["message"] == "Delivery updated: Delivered & Accepted"

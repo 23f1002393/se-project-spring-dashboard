@@ -1,64 +1,46 @@
-import json
+import pytest
 
-
-def test_03_generate_quotation(client, init_database, print_test_case):
-    # Setup: Create Enquiry 2
-    client.post("/api/v1/enquiries", json={"customer_id": 1})
-
-    url = "http://127.0.0.1:5000/api/v1/enquiries/2/quotations"
-    payload = {"price": 1200.50, "est_delivery": "2026-05-15"}
-    response = client.post("/api/v1/enquiries/2/quotations", json=payload)
-    actual = response.get_json()
-    expected = {"message": "Quotation generated", "quote_id": 2}
-    print_test_case(
-        3,
-        "Generate Quotation",
-        url,
-        "POST",
-        json.dumps(payload),
-        201,
-        expected,
-        response.status_code,
-        actual,
-    )
+def test_quotation_generation(client, init_database):
+    """Test generating a quotation for an enquiry"""
+    response = client.post("/api/v1/enquiries/1/quotations", json={
+        "price": 1200.0,
+        "est_delivery": "2026-05-20"
+    })
     assert response.status_code == 201
+    data = response.get_json()
+    assert "quote_id" in data
 
-
-def test_04_revise_quotation(client, init_database, print_test_case):
-    url = "http://127.0.0.1:5000/api/v1/quotations/1/revise"
-    payload = {"price": 1400.00}
-    response = client.post("/api/v1/quotations/1/revise", json=payload)
-    actual = response.get_json()
-    expected = {"message": "Quotation revised to version 2", "new_quote_id": 3}
-    print_test_case(
-        4,
-        "Revise Quotation",
-        url,
-        "POST",
-        json.dumps(payload),
-        201,
-        expected,
-        response.status_code,
-        actual,
-    )
+def test_quotation_revision(client, init_database):
+    """Test revising a quotation"""
+    response = client.post("/api/v1/quotations/1/revise", json={
+        "price": 1400.0,
+        "est_delivery": "2026-05-25"
+    })
     assert response.status_code == 201
+    data = response.get_json()
+    assert "new_quote_id" in data
+    assert "revised to version 2" in data["message"]
 
+def test_quotation_rejection(client, init_database):
+    """Test rejecting a quotation with a reason"""
+    response = client.put("/api/v1/enquiries/1/quotations", json={
+        "quote_id": 1,
+        "rejection_reason": "Price is too high"
+    })
+    assert response.status_code == 200
+    assert response.get_json()["message"] == "Quotation rejected successfully"
+    
+    # Verify enquiry status
+    response = client.get("/api/v1/enquiries/1")
+    assert response.get_json()["status"] == "Rejected"
+    assert response.get_json()["rejection_reason"] == "Price is too high"
 
-def test_05_accept_quotation(client, init_database, print_test_case):
-    url = "http://127.0.0.1:5000/api/v1/quotations/1/accept"
-    payload = {"spring_id": 1}
-    response = client.post("/api/v1/quotations/1/accept", json=payload)
-    actual = response.get_json()
-    expected = {"message": "Quotation accepted and Order confirmed", "order_id": 3}
-    print_test_case(
-        5,
-        "Accept Quotation (Create Order)",
-        url,
-        "POST",
-        json.dumps(payload),
-        201,
-        expected,
-        response.status_code,
-        actual,
-    )
+def test_quotation_acceptance_and_order_creation(client, init_database):
+    """Test accepting a quotation to create an order"""
+    response = client.post("/api/v1/quotations/1/accept", json={
+        "spring_id": 1
+    })
     assert response.status_code == 201
+    data = response.get_json()
+    assert "order_id" in data
+    assert data["message"] == "Quotation accepted and Order confirmed"

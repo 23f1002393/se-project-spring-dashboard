@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { LogOut, LayoutDashboard, Zap } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "@/lib/hooks";
 import { clearUser } from "@/lib/features/user/userSlice";
+import { ModeToggle } from "@/components/mode-toggle";
 
 export default function Navbar() {
   const user = useAppSelector((state) => state.user.user);
@@ -28,6 +29,7 @@ export default function Navbar() {
 
         {/* Right side actions */}
         <div className="flex items-center gap-3">
+          <ModeToggle />
           {user ? (
             <>
               <Link to={user.role === "manager" ? "/manager" : "/customer"}>

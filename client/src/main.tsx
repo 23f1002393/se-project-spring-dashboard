@@ -8,12 +8,15 @@ import { StrictMode } from "react";
 import "@/index.css";
 import { router } from "@/lib/router";
 import { store, persistor } from "@/lib/store";
+import { ThemeProvider } from "@/components/theme-provider";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <Provider store={store}>
       <PersistGate loading={null} persistor={persistor}>
-        <RouterProvider router={router} />
+        <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
+          <RouterProvider router={router} />
+        </ThemeProvider>
       </PersistGate>
     </Provider>
   </StrictMode>

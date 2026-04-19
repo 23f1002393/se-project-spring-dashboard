@@ -1,12 +1,36 @@
 from flask import request
 from flask_restful import Resource
 
-from datetime import datetime
+from datetime import datetime, timezone
 from utils import error_response
 from models import Order, Shipment, db
 
 
 class ShipmentDispatchAPI(Resource):
+    def get(self):
+        """
+        Fetch all shipments
+        ---
+        tags:
+          - Delivery Status (Epic 5)
+        responses:
+          200:
+            description: A list of all shipments
+        """
+        shipments = Shipment.query.all()
+        return [
+            {
+                "shipment_id": s.shipment_id,
+                "order_id": s.order_id,
+                "shipped_date": s.shipped_date.strftime("%Y-%m-%d") if s.shipped_date else None,
+                "carrier": s.carrier,
+                "tracking_number": s.tracking_number,
+                "status": s.status,
+                "customer_feedback": s.customer_feedback
+            }
+            for s in shipments
+        ], 200
+
     def post(self, order_id):
         """
         Dispatch an order and generate tracking details (User Story 5.1)
@@ -37,7 +61,7 @@ class ShipmentDispatchAPI(Resource):
           201:
             description: Shipment dispatched successfully
         """
-        order = Order.query.get(order_id)
+        order = db.session.get(Order, order_id)
         if not order:
             return error_response(404, "Order not found")
 
@@ -48,7 +72,7 @@ class ShipmentDispatchAPI(Resource):
 
         new_shipment = Shipment(
             order_id=order_id,
-            shipped_date=datetime.utcnow().date(),
+            shipped_date=datetime.now(timezone.utc).date(),
             carrier=data["carrier"],
             tracking_number=data["tracking_number"],
         )
@@ -92,18 +116,23 @@ class ShipmentDeliveryAPI(Resource):
                   type: string
                   description: Required if delivery_status is Rejected
                   example: "Springs failed load test at customer site"
+                customer_feedback:
+                  type: string
+                  example: "Fast delivery, high quality"
         responses:
           200:
             description: Delivery status updated
         """
-        shipment = Shipment.query.get(shipment_id)
+        shipment = db.session.get(Shipment, shipment_id)
         if not shipment:
             return error_response(404, "Shipment not found")
 
-        order = Order.query.get(shipment.order_id)
+        order = db.session.get(Order, shipment.order_id)
         data = request.get_json()
 
         status = data.get("delivery_status")
+        shipment.status = status
+        shipment.customer_feedback = data.get("customer_feedback")
 
         if status == "Rejected":
             reason = data.get("rejection_reason", "No reason provided")

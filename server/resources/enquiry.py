@@ -2,7 +2,7 @@ from flask import request
 from flask_restful import Resource
 
 from utils import error_response
-from models import Enquiry, Customer, db
+from models import Enquiry, User, db
 
 
 # EPIC 1
@@ -38,6 +38,7 @@ class EnquiryAPI(Resource):
                 "product_spec": e.product_spec,
                 "quantity": e.quantity,
                 "status": e.status,
+                "rejection_reason": e.rejection_reason,
                 "created_at": e.created_at.strftime("%Y-%m-%d %H:%M:%S")
                 if e.created_at
                 else None,
@@ -46,16 +47,19 @@ class EnquiryAPI(Resource):
         ], 200
 
     def post(self):
-        # ... (Keep your existing post method code here) ...
         data = request.get_json()
         if "customer_id" not in data:
             return error_response(400, "customer_id is required")
-        customer = Customer.query.get(data["customer_id"])
+        customer = db.session.get(User, data["customer_id"])
         if not customer:
             return error_response(
                 404, f"Customer with ID {data['customer_id']} not found."
             )
-        new_enquiry = Enquiry(customer_id=data["customer_id"])
+        new_enquiry = Enquiry(
+            customer_id=data["customer_id"],
+            product_spec=data.get("product_spec"),
+            quantity=data.get("quantity"),
+        )
         db.session.add(new_enquiry)
         db.session.commit()
         return {
@@ -67,8 +71,23 @@ class EnquiryAPI(Resource):
 
 class EnquiryDetailAPI(Resource):
     def get(self, enquiry_id):
+        enquiry = db.session.get(Enquiry, enquiry_id)
+        if not enquiry:
+            return error_response(404, f"Enquiry ID {enquiry_id} not found.")
+
+        return {
+            "enquiry_id": enquiry.enquiry_id,
+            "customer_id": enquiry.customer_id,
+            "status": enquiry.status,
+            "rejection_reason": enquiry.rejection_reason,
+            "created_at": enquiry.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            if enquiry.created_at
+            else None,
+        }, 200
+
+    def put(self, enquiry_id):
         """
-        Fetch details of a specific enquiry by ID
+        Update an enquiry's status or details
         ---
         tags:
           - Enquiries
@@ -77,21 +96,37 @@ class EnquiryDetailAPI(Resource):
             in: path
             type: integer
             required: true
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                product_spec:
+                  type: string
+                quantity:
+                  type: integer
         responses:
           200:
-            description: Detailed enquiry information
+            description: Enquiry updated successfully
           404:
             description: Enquiry not found
         """
-        enquiry = Enquiry.query.get(enquiry_id)
+        enquiry = db.session.get(Enquiry, enquiry_id)
         if not enquiry:
             return error_response(404, f"Enquiry ID {enquiry_id} not found.")
 
-        return {
-            "enquiry_id": enquiry.enquiry_id,
-            "customer_id": enquiry.customer_id,
-            "status": enquiry.status,
-            "created_at": enquiry.created_at.strftime("%Y-%m-%d %H:%M:%S")
-            if enquiry.created_at
-            else None,
-        }, 200
+        data = request.get_json()
+        if "status" in data:
+            enquiry.status = data["status"]
+        if "product_spec" in data:
+            enquiry.product_spec = data["product_spec"]
+        if "quantity" in data:
+            enquiry.quantity = data["quantity"]
+        if "rejection_reason" in data:
+            enquiry.rejection_reason = data["rejection_reason"]
+
+        db.session.commit()
+        return {"message": "Enquiry updated successfully"}, 200

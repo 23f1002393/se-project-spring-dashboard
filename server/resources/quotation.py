@@ -1,5 +1,5 @@
 from flask_restful import Resource
-from models import Enquiry, Quotation, Order, db
+from models import Enquiry, Quotation, Order, Spring, db
 from utils import error_response
 from flask import request
 from datetime import datetime
@@ -24,7 +24,7 @@ class QuotationAPI(Resource):
           404:
             description: Enquiry not found
         """
-        enquiry = Enquiry.query.get(enquiry_id)
+        enquiry = db.session.get(Enquiry, enquiry_id)
         if not enquiry:
             return error_response(404, f"Enquiry ID {enquiry_id} not found.")
 
@@ -45,7 +45,7 @@ class QuotationAPI(Resource):
 
     def post(self, enquiry_id):
         # ... (Keep your existing post method code here) ...
-        enquiry = Enquiry.query.get(enquiry_id)
+        enquiry = db.session.get(Enquiry, enquiry_id)
         if not enquiry:
             return error_response(404, f"Enquiry ID {enquiry_id} not found.")
         data = request.get_json()
@@ -65,6 +65,47 @@ class QuotationAPI(Resource):
         db.session.add(new_quote)
         db.session.commit()
         return {"message": "Quotation generated", "quote_id": new_quote.quote_id}, 201
+
+    def put(self, enquiry_id):
+        """
+        Explicitly reject a quotation (User Story 1.4, 3.2.1)
+        ---
+        tags:
+          - Quotations
+        parameters:
+          - name: enquiry_id
+            in: path
+            type: integer
+            required: true
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                quote_id:
+                  type: integer
+                rejection_reason:
+                  type: string
+        responses:
+          200:
+            description: Quotation rejected
+        """
+        data = request.get_json()
+        quote_id = data.get("quote_id")
+        rejection_reason = data.get("rejection_reason")
+
+        quote = db.session.get(Quotation, quote_id)
+        if not quote:
+            return error_response(404, "Quotation not found")
+
+        enquiry = db.session.get(Enquiry, enquiry_id)
+        if enquiry:
+            enquiry.status = "Rejected"
+            enquiry.rejection_reason = rejection_reason
+
+        db.session.commit()
+        return {"message": "Quotation rejected successfully"}, 200
 
 
 class QuotationReviseAPI(Resource):
@@ -100,7 +141,7 @@ class QuotationReviseAPI(Resource):
           404:
             description: Original quotation not found
         """
-        old_quote = Quotation.query.get(quote_id)
+        old_quote = db.session.get(Quotation, quote_id)
         if not old_quote:
             return error_response(404, f"Quotation ID {quote_id} not found.")
 
@@ -122,6 +163,14 @@ class QuotationReviseAPI(Resource):
 
         db.session.add(new_quote)
         db.session.commit()
+
+        from utils import log_audit
+        log_audit(
+            entity_type="Quotation",
+            entity_id=new_quote.quote_id,
+            action="Revised",
+            details=f"New version {new_quote.version_number} created from quote {old_quote.quote_id}"
+        )
 
         return {
             "message": f"Quotation revised to version {new_quote.version_number}",
@@ -154,7 +203,7 @@ class QuotationAcceptAPI(Resource):
                 spring_id:
                   type: integer
                   example: 1
-                  description: The ID of the Spring Master component being ordered
+                  description: The ID of the Spring component being ordered
         responses:
           201:
             description: Order created successfully
@@ -163,7 +212,7 @@ class QuotationAcceptAPI(Resource):
           404:
             description: Quotation or Spring not found
         """
-        quote = Quotation.query.get(quote_id)
+        quote = db.session.get(Quotation, quote_id)
         if not quote:
             return error_response(404, f"Quotation ID {quote_id} not found.")
 
@@ -177,8 +226,9 @@ class QuotationAcceptAPI(Resource):
         quote.is_accepted = True
 
         # Update enquiry status
-        enquiry = Enquiry.query.get(quote.enquiry_id)
-        enquiry.status = "Order Confirmed"
+        enquiry = db.session.get(Enquiry, quote.enquiry_id)
+        if enquiry:
+            enquiry.status = "Order Confirmed"
 
         # Create Production Order
         new_order = Order(

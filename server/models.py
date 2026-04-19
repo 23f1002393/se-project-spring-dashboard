@@ -1,28 +1,96 @@
-from datetime import datetime
-from flask_sqlalchemy import SQLAlchemy
+import datetime as dt
+from datetime import datetime, timezone
+from sqlalchemy import (
+    create_engine,
+    ForeignKey,
+    String,
+    Integer,
+    Float,
+    DateTime,
+    Date,
+    Boolean,
+)
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    mapped_column,
+    relationship,
+    sessionmaker,
+    scoped_session,
+)
 from werkzeug.security import generate_password_hash, check_password_hash
 
-db = SQLAlchemy()
+# Define the engine and session objects at the module level
+# They will be initialized in init_app_db
+engine = None
+db_session = scoped_session(sessionmaker())
 
 
-# Initialize the database with the Flask app
+class QueryProperty:
+    def __get__(self, instance, owner):
+        return db_session.query(owner)
+
+
+class Base(DeclarativeBase):
+    query = QueryProperty()
+
+
+# Proxy object to maintain compatibility with existing 'db.session' and 'db.Model' calls
+class db:
+    session = db_session
+    Model = Base
+
+    @staticmethod
+    def init_app(app):
+        init_app_db(app)
+
+    @staticmethod
+    def create_all():
+        if engine:
+            Base.metadata.create_all(engine)
+
+    @staticmethod
+    def drop_all():
+        if engine:
+            Base.metadata.drop_all(engine)
+
+
+# Initialize the database
 def init_app_db(app):
-    db.init_app(app)
-    with app.app_context():
-        db.create_all()
+    global engine
+    database_uri = app.config.get(
+        "SQLALCHEMY_DATABASE_URI", "sqlite:///spring_manufacturing.db"
+    )
+    engine = create_engine(database_uri)
+    db_session.configure(bind=engine)
+
+    # Create tables
+    Base.metadata.create_all(engine)
+
+    @app.teardown_appcontext
+    def shutdown_session(exception=None):
+        db_session.remove()
 
 
 # --- MODELS ---
 
 
-class User(db.Model):
+class User(Base):
     __tablename__ = "users"
-    user_id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    email = db.Column(db.String(100), unique=True, nullable=False)
-    password_hash = db.Column(db.String(255), nullable=False)
-    role = db.Column(db.String(50), default="customer")
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    email: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(50), default="customer")
+    company_name: Mapped[str] = mapped_column(String(100), nullable=True)
+    phone: Mapped[str] = mapped_column(String(20), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+    enquiries: Mapped[list["Enquiry"]] = relationship(
+        "Enquiry", backref="customer", lazy=True
+    )
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -36,123 +104,176 @@ class User(db.Model):
             "name": self.name,
             "email": self.email,
             "role": self.role,
+            "company_name": self.company_name,
+            "phone": self.phone,
         }
 
 
-class Customer(db.Model):
-    __tablename__ = "customers"
-    customer_id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100))
-    email = db.Column(db.String(100), unique=True)
-    password = db.Column(db.String(255))
-    company_name = db.Column(db.String(100))
-    phone = db.Column(db.String(20))
-
-    enquiries = db.relationship("Enquiry", backref="customer", lazy=True)
-
-
-class Enquiry(db.Model):
+class Enquiry(Base):
     __tablename__ = "enquiries"
-    enquiry_id = db.Column(db.Integer, primary_key=True)
-    customer_id = db.Column(db.Integer, db.ForeignKey("customers.customer_id"))
-    product_spec = db.Column(db.String(255))
-    quantity = db.Column(db.Integer)
-    status = db.Column(db.String(50), default="New")
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    enquiry_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    customer_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.user_id"), nullable=True
+    )
+    product_spec: Mapped[str] = mapped_column(String(255), nullable=True)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="New")
+    rejection_reason: Mapped[str] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
 
-    quotations = db.relationship("Quotation", backref="enquiry", lazy=True)
+    quotations: Mapped[list["Quotation"]] = relationship(
+        "Quotation", backref="enquiry", lazy=True
+    )
 
 
-class Quotation(db.Model):
+class Quotation(Base):
     __tablename__ = "quotations"
-    quote_id = db.Column(db.Integer, primary_key=True)
-    enquiry_id = db.Column(db.Integer, db.ForeignKey("enquiries.enquiry_id"))
-    version_number = db.Column(db.Integer, default=1)
-    price = db.Column(db.Float)
-    est_delivery = db.Column(db.Date)
-    is_accepted = db.Column(db.Boolean, default=False)
+    quote_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    enquiry_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("enquiries.enquiry_id"), nullable=True
+    )
+    version_number: Mapped[int] = mapped_column(Integer, default=1)
+    price: Mapped[float] = mapped_column(Float, nullable=True)
+    est_delivery: Mapped[dt.date] = mapped_column(Date, nullable=True)
+    is_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    orders = db.relationship("Order", backref="quotation", lazy=True)
-
-
-class SpringMaster(db.Model):
-    __tablename__ = "spring_master"
-    spring_id = db.Column(db.Integer, primary_key=True)
-    part_number = db.Column(db.String(50), unique=True)
-    wire_diameter = db.Column(db.Float)
-    material_spec = db.Column(db.String(100))
-
-    orders = db.relationship("Order", backref="spring", lazy=True)
+    orders: Mapped[list["Order"]] = relationship(
+        "Order", backref="quotation", lazy=True
+    )
 
 
-class Order(db.Model):
+class Spring(Base):
+    __tablename__ = "springs"
+    spring_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    part_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=True)
+    wire_diameter: Mapped[float] = mapped_column(Float, nullable=True)
+    material_spec: Mapped[str] = mapped_column(String(100), nullable=True)
+    stock_quantity: Mapped[int] = mapped_column(Integer, default=0)
+
+    orders: Mapped[list["Order"]] = relationship("Order", backref="spring", lazy=True)
+
+
+class Order(Base):
     __tablename__ = "orders"
-    order_id = db.Column(db.Integer, primary_key=True)
-    quote_id = db.Column(db.Integer, db.ForeignKey("quotations.quote_id"))
-    spring_id = db.Column(db.Integer, db.ForeignKey("spring_master.spring_id"))
-    production_status = db.Column(db.String(50), default="Pending")
+    order_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    quote_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("quotations.quote_id"), nullable=True
+    )
+    spring_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("springs.spring_id"), nullable=True
+    )
+    production_status: Mapped[str] = mapped_column(String(50), default="Pending")
 
-    tasks = db.relationship("ProductionTask", backref="order", lazy=True)
-    invoices = db.relationship("Invoice", backref="order", lazy=True)
-    shipments = db.relationship("Shipment", backref="order", lazy=True)
+    tasks: Mapped[list["ProductionTask"]] = relationship(
+        "ProductionTask", backref="order", lazy=True
+    )
+    invoices: Mapped[list["Invoice"]] = relationship(
+        "Invoice", backref="order", lazy=True
+    )
+    shipments: Mapped[list["Shipment"]] = relationship(
+        "Shipment", backref="order", lazy=True
+    )
 
 
-class Machine(db.Model):
+class Machine(Base):
     __tablename__ = "machines"
-    machine_id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100))
-    type = db.Column(db.String(50))
-    status = db.Column(db.String(50))
+    machine_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=True)
+    type: Mapped[str] = mapped_column(String(50), nullable=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=True)
 
-    tasks = db.relationship("ProductionTask", backref="machine", lazy=True)
+    tasks: Mapped[list["ProductionTask"]] = relationship(
+        "ProductionTask", backref="machine", lazy=True
+    )
 
 
-class Material(db.Model):
+class Material(Base):
     __tablename__ = "materials"
-    material_id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100))
-    specification = db.Column(db.String(100))
-    stock_quantity = db.Column(db.Float)
+    material_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=True)
+    specification: Mapped[str] = mapped_column(String(100), nullable=True)
+    stock_quantity: Mapped[float] = mapped_column(Float, nullable=True)
 
-    tasks = db.relationship("ProductionTask", backref="material", lazy=True)
+    tasks: Mapped[list["ProductionTask"]] = relationship(
+        "ProductionTask", backref="material", lazy=True
+    )
 
 
-class ProductionTask(db.Model):
+class ProductionTask(Base):
     __tablename__ = "production_tasks"
-    task_id = db.Column(db.Integer, primary_key=True)
-    order_id = db.Column(db.Integer, db.ForeignKey("orders.order_id"))
-    machine_id = db.Column(db.Integer, db.ForeignKey("machines.machine_id"))
-    material_id = db.Column(db.Integer, db.ForeignKey("materials.material_id"))
-    status = db.Column(db.String(50), default="Scheduled")
-    progress = db.Column(db.Integer, default=0)
-    scheduled_at = db.Column(db.DateTime)
-    completed_at = db.Column(db.DateTime)
+    task_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    order_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("orders.order_id"), nullable=True
+    )
+    machine_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("machines.machine_id"), nullable=True
+    )
+    material_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("materials.material_id"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(50), default="Scheduled")
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    deadline: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
-    quality_reports = db.relationship("QualityReport", backref="task", lazy=True)
+    quality_reports: Mapped[list["QualityReport"]] = relationship(
+        "QualityReport", backref="task", lazy=True
+    )
 
 
-class QualityReport(db.Model):
+class QualityReport(Base):
     __tablename__ = "quality_reports"
-    report_id = db.Column(db.Integer, primary_key=True)
-    task_id = db.Column(db.Integer, db.ForeignKey("production_tasks.task_id"))
-    inspector = db.Column(db.String(100))
-    result = db.Column(db.String(50))
-    report_date = db.Column(db.DateTime, default=datetime.utcnow)
+    report_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("production_tasks.task_id"), nullable=True
+    )
+    inspector: Mapped[str] = mapped_column(String(100), nullable=True)
+    result: Mapped[str] = mapped_column(String(50), nullable=True)
+    rejection_reason: Mapped[str] = mapped_column(String(255), nullable=True)
+    report_date: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
 
 
-class Invoice(db.Model):
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    log_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_type: Mapped[str] = mapped_column(
+        String(50), nullable=True
+    )  # e.g., Quotation, Order, QC
+    entity_id: Mapped[int] = mapped_column(Integer, nullable=True)
+    action: Mapped[str] = mapped_column(String(100), nullable=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.user_id"), nullable=True
+    )
+    details: Mapped[str] = mapped_column(String(255), nullable=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class Invoice(Base):
     __tablename__ = "invoices"
-    invoice_id = db.Column(db.Integer, primary_key=True)
-    order_id = db.Column(db.Integer, db.ForeignKey("orders.order_id"))
-    amount = db.Column(db.Float)
-    issued_date = db.Column(db.Date)
-    paid = db.Column(db.Boolean, default=False)
+    invoice_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    order_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("orders.order_id"), nullable=True
+    )
+    amount: Mapped[float] = mapped_column(Float, nullable=True)
+    issued_date: Mapped[dt.date] = mapped_column(Date, nullable=True)
+    paid: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
-class Shipment(db.Model):
+class Shipment(Base):
     __tablename__ = "shipments"
-    shipment_id = db.Column(db.Integer, primary_key=True)
-    order_id = db.Column(db.Integer, db.ForeignKey("orders.order_id"))
-    shipped_date = db.Column(db.Date)
-    carrier = db.Column(db.String(100))
-    tracking_number = db.Column(db.String(100))
+    shipment_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    order_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("orders.order_id"), nullable=True
+    )
+    shipped_date: Mapped[dt.date] = mapped_column(Date, nullable=True)
+    carrier: Mapped[str] = mapped_column(String(100), nullable=True)
+    tracking_number: Mapped[str] = mapped_column(String(100), nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="Dispatch")
+    customer_feedback: Mapped[str] = mapped_column(String(255), nullable=True)
