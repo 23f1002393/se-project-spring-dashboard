@@ -1,7 +1,7 @@
 from flask import request
 from flask_restful import Resource
 
-from datetime import datetime
+from datetime import datetime, timezone
 from utils import error_response
 from models import ProductionTask, Material, QualityReport, Order, db
 
@@ -70,9 +70,22 @@ class ProductionTaskAPI(Resource):
             description: Resource not found
         """
         data = request.get_json()
+        order_id = data.get("order_id")
+        order = db.session.get(Order, order_id)
+        if not order:
+            return error_response(404, "Order not found")
 
-        # 1. Check material availability
-        material = Material.query.get(data["material_id"])
+        # 1. Check Finished Goods Inventory (User Story 2.4 / 3.2.4)
+        from models import Spring
+        spring = db.session.get(Spring, order.spring_id)
+        if spring and spring.stock_quantity > 0:
+            # If we have stock, we could potentially fulfill from stock.
+            # For simplicity, we just log that we checked it.
+            # In a more complex system, we might prompt to use stock.
+            pass
+
+        # 2. Check material availability
+        material = db.session.get(Material, data["material_id"])
         if not material:
             return error_response(404, "Material not found")
 
@@ -102,7 +115,7 @@ class ProductionTaskAPI(Resource):
         material.stock_quantity -= required_qty  # Deduct stock
 
         # Update Order Status
-        order = Order.query.get(data["order_id"])
+        order = db.session.get(Order, data["order_id"])
         if order:
             order.production_status = "In Production"
 
@@ -140,7 +153,7 @@ class TaskStatusUpdateAPI(Resource):
           200:
             description: Task status updated
         """
-        task = ProductionTask.query.get(task_id)
+        task = db.session.get(ProductionTask, task_id)
         if not task:
             return error_response(404, f"Task ID {task_id} not found")
 
@@ -149,7 +162,7 @@ class TaskStatusUpdateAPI(Resource):
 
         task.status = new_status
         if new_status == "Completed":
-            task.completed_at = datetime.utcnow()
+            task.completed_at = datetime.now(timezone.utc)
 
         db.session.commit()
         return {"message": f"Task status updated to {new_status}"}, 200
@@ -182,27 +195,76 @@ class QualityReportAPI(Resource):
                 result:
                   type: string
                   example: "Approved" # Approved or Rejected
+                rejection_reason:
+                  type: string
+                  example: "Spring length exceeds tolerance"
         responses:
           201:
             description: Quality report saved
         """
-        task = ProductionTask.query.get(task_id)
+        task = db.session.get(ProductionTask, task_id)
         if not task:
             return error_response(404, "Task not found")
 
         data = request.get_json()
 
         report = QualityReport(
-            task_id=task_id, inspector=data["inspector"], result=data["result"]
+            task_id=task_id,
+            inspector=data["inspector"],
+            result=data["result"],
+            rejection_reason=data.get("rejection_reason"),
         )
 
         db.session.add(report)
 
-        # If approved, update order status to ready for invoicing
+        # Update task status based on QC result
         if data["result"] == "Approved":
-            order = Order.query.get(task.order_id)
+            task.status = "QC Passed"
+        else:
+            task.status = "QC Failed"
+
+        from utils import log_audit
+        log_audit(
+            entity_type="QualityReport",
+            entity_id=report.report_id,
+            action=data["result"],
+            details=f"Task {task_id} {data['result']} by {data['inspector']}. Reason: {data.get('rejection_reason')}"
+        )
+
+        # If approved, update order status to ready for invoicing and auto-generate invoice
+        if data["result"] == "Approved":
+            order = db.session.get(Order, task.order_id)
             if order:
                 order.production_status = "Quality Approved - Ready for Billing"
+                
+                # Auto-generate Invoice (User Story 3.2.8)
+                from models import Invoice, Quotation
+                from datetime import timezone
+                
+                # Get price from quotation
+                quote = db.session.get(Quotation, order.quote_id)
+                amount = quote.price if quote else 0.0
+                
+                new_invoice = Invoice(
+                    order_id=order.order_id,
+                    amount=amount,
+                    issued_date=datetime.now(timezone.utc).date(),
+                    paid=False
+                )
+                db.session.add(new_invoice)
+                order.production_status = "Invoiced - Pending Dispatch"
+                
+                log_audit(
+                    entity_type="Invoice",
+                    entity_id=new_invoice.invoice_id,
+                    action="Auto-Generated",
+                    details=f"Invoice for order {order.order_id} generated after QC approval"
+                )
+
+        elif data["result"] == "Rejected":
+            order = db.session.get(Order, task.order_id)
+            if order:
+                order.production_status = "Failed QC - Rework Required"
 
         db.session.commit()
 

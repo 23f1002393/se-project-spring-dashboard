@@ -27,3 +27,16 @@ export async function updateTaskStatus(
     method: "PUT",
   });
 }
+
+/**
+ * Record inspection results for a task.
+ */
+export async function createQualityReport(
+  taskId: number,
+  data: { inspector: string; result: string; rejection_reason?: string }
+): Promise<any> {
+  return fetchApi<any>(`/tasks/${taskId}/quality`, {
+    data,
+    method: "POST",
+  });
+}

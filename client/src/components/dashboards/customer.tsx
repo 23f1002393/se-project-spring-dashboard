@@ -1,4 +1,10 @@
-import { useState, useEffect, useOptimistic, useActionState, startTransition } from "react";
+import {
+  useState,
+  useEffect,
+  useOptimistic,
+  useActionState,
+  startTransition,
+} from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FileText,
@@ -7,17 +13,32 @@ import {
   Clock,
   CheckCircle,
   XCircle,
+  PackageCheck,
 } from "lucide-react";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { getEnquiries } from "@/lib/actions/enquiries";
+import { getEnquiries, updateEnquiry } from "@/lib/actions/enquiries";
 import { getTasks } from "@/lib/actions/tasks";
 import { acceptQuotation } from "@/lib/actions/quotations";
+import { getShipments, updateDelivery, type Shipment } from "@/lib/actions/shipments";
 
 // --- Skeleton Components ---
 
@@ -25,7 +46,10 @@ function MetricsSkeleton() {
   return (
     <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
       {Array.from({ length: 3 }).map((_, i) => (
-        <Card key={i} className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl">
+        <Card
+          key={i}
+          className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl"
+        >
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <Skeleton className="h-4 w-24" />
             <Skeleton className="h-8 w-8 rounded-full" />
@@ -86,13 +110,6 @@ interface DisplayOrder {
   expectedDelivery: string;
 }
 
-interface DisplayShipment {
-  id: number | string;
-  orderId: number | string;
-  status: string;
-  dispatchDate: string;
-}
-
 const TABS = [
   { id: "quotations", label: "Quotations", icon: FileText },
   { id: "orders", label: "Active Orders", icon: PackageSearch },
@@ -101,7 +118,9 @@ const TABS = [
 
 // --- Action functions for useActionState ---
 
-async function fetchQuotations(_prev: DisplayQuotation[]): Promise<DisplayQuotation[]> {
+async function fetchQuotations(
+  _prev: DisplayQuotation[]
+): Promise<DisplayQuotation[]> {
   const enquiries = await getEnquiries();
   return enquiries.map((e) => ({
     id: e.id,
@@ -117,19 +136,26 @@ async function fetchOrders(_prev: DisplayOrder[]): Promise<DisplayOrder[]> {
   return tasks.map((t) => ({
     id: t.id, // Unique Task ID
     orderId: t.order_id,
-    product: `Task ${t.id}`,
+    product: `Order #${t.order_id}`,
     status: t.status,
     expectedDelivery: "—",
   }));
+}
+
+async function fetchShipments(): Promise<Shipment[]> {
+  return getShipments();
 }
 
 export function CustomerDashboard() {
   const [activeTab, setActiveTab] = useState("quotations");
 
   // useActionState for each data source
-  const [quotations, loadQuotations, quotationsLoading] = useActionState(fetchQuotations, []);
+  const [quotations, loadQuotations, quotationsLoading] = useActionState(
+    fetchQuotations,
+    []
+  );
   const [orders, loadOrders, ordersLoading] = useActionState(fetchOrders, []);
-  const [deliveries] = useState<DisplayShipment[]>([]); // No list endpoint yet
+  const [deliveries, loadDeliveries, deliveriesLoading] = useActionState(fetchShipments, []);
 
   // Optimistic quotation updates for approve/reject
   const [optimisticQuotations, setOptimisticQuotation] = useOptimistic(
@@ -146,15 +172,16 @@ export function CustomerDashboard() {
       });
     }
     try {
-      await acceptQuotation(Number(quoteId));
-      startTransition(() => {
-        loadQuotations(); // Refresh from server
-      });
+      await updateEnquiry(quoteId, { status: "Order Confirmed" });
+      try {
+        await acceptQuotation(Number(quoteId));
+      } catch (e) {
+        console.warn("acceptQuotation failed", e);
+      }
+      startTransition(() => { loadQuotations(); });
     } catch (err) {
-      console.error("Failed to approve quotation", err);
-      startTransition(() => {
-        loadQuotations(); // Rollback by refetching
-      });
+      console.error("Failed to approve", err);
+      startTransition(() => { loadQuotations(); });
     }
   };
 
@@ -165,7 +192,25 @@ export function CustomerDashboard() {
         setOptimisticQuotation({ ...qt, status: "Rejected" });
       });
     }
-    // No reject endpoint yet — just optimistic UI
+    try {
+      await updateEnquiry(quoteId, { 
+        status: "Rejected",
+        rejection_reason: "Customer rejected the quotation." 
+      });
+      startTransition(() => { loadQuotations(); });
+    } catch (err) {
+      console.error("Failed to reject", err);
+      startTransition(() => { loadQuotations(); });
+    }
+  };
+
+  const handleConfirmDelivery = async (shipmentId: number, status: string) => {
+    try {
+      await updateDelivery(shipmentId, { delivery_status: status, customer_feedback: "Goods received in good condition." });
+      loadDeliveries();
+    } catch (err) {
+      console.error("Failed to confirm delivery", err);
+    }
   };
 
   // Fetch data when tab changes
@@ -173,14 +218,19 @@ export function CustomerDashboard() {
     startTransition(() => {
       if (activeTab === "quotations") loadQuotations();
       else if (activeTab === "orders") loadOrders();
+      else if (activeTab === "deliveries") loadDeliveries();
     });
   }, [activeTab]);
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 p-6 font-sans md:p-10">
       <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-semibold tracking-tight text-foreground">Customer Portal</h1>
-        <p className="text-sm text-muted-foreground">Track your orders, review quotations, and monitor shipments.</p>
+        <h1 className="text-3xl font-semibold tracking-tight text-foreground">
+          Customer Portal
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          Track your orders, review quotations, and monitor shipments.
+        </p>
       </div>
 
       {/* Top Level Metrics */}
@@ -191,7 +241,9 @@ export function CustomerDashboard() {
           {[
             {
               title: "Pending Quotations",
-              value: optimisticQuotations.filter((q) => q.status !== "Approved" && q.status !== "Rejected").length,
+              value: optimisticQuotations.filter(
+                (q) => q.status !== "Approved" && q.status !== "Rejected"
+              ).length,
               icon: FileText,
               color: "text-amber-500",
               bg: "bg-amber-500/10",
@@ -205,7 +257,7 @@ export function CustomerDashboard() {
             },
             {
               title: "In Transit",
-              value: `${deliveries.filter((d) => d.status === "In Transit").length} Shipments`,
+              value: deliveries.filter((d) => d.status === "Dispatch" || d.status === "In Transit").length,
               icon: Truck,
               color: "text-emerald-500",
               bg: "bg-emerald-500/10",
@@ -219,8 +271,15 @@ export function CustomerDashboard() {
             >
               <Card className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl transition-all hover:bg-background/80 hover:shadow-md">
                 <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">{metric.title}</CardTitle>
-                  <div className={cn("flex h-8 w-8 items-center justify-center rounded-full", metric.bg)}>
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    {metric.title}
+                  </CardTitle>
+                  <div
+                    className={cn(
+                      "flex h-8 w-8 items-center justify-center rounded-full",
+                      metric.bg
+                    )}
+                  >
                     <metric.icon className={cn("h-4 w-4", metric.color)} />
                   </div>
                 </CardHeader>
@@ -242,8 +301,10 @@ export function CustomerDashboard() {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={cn(
-                "relative flex items-center gap-2 whitespace-nowrap px-5 py-3 text-sm font-medium transition-colors",
-                isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
+                "relative flex items-center gap-2 px-5 py-3 text-sm font-medium whitespace-nowrap transition-colors",
+                isActive
+                  ? "text-primary"
+                  : "text-muted-foreground hover:text-foreground"
               )}
             >
               <tab.icon className="h-4 w-4" />
@@ -275,7 +336,9 @@ export function CustomerDashboard() {
               <Card className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl">
                 <CardHeader>
                   <CardTitle>Your Quotations</CardTitle>
-                  <CardDescription>Review and approve manufacturing quotes.</CardDescription>
+                  <CardDescription>
+                    Review and approve manufacturing quotes.
+                  </CardDescription>
                 </CardHeader>
                 <CardContent>
                   {quotationsLoading ? (
@@ -301,46 +364,24 @@ export function CustomerDashboard() {
                               <TableCell>{qt.amount}</TableCell>
                               <TableCell>{qt.date}</TableCell>
                               <TableCell>
-                                <Badge
-                                  variant={qt.status === "Approved" ? "default" : qt.status === "Rejected" ? "destructive" : "secondary"}
-                                  className="shadow-sm"
-                                >
+                                <Badge variant={qt.status === "Approved" ? "default" : qt.status === "Rejected" ? "destructive" : "secondary"}>
                                   {qt.status}
                                 </Badge>
                               </TableCell>
                               <TableCell className="text-right">
-                                {qt.status !== "Approved" && qt.status !== "Rejected" ? (
+                                {qt.status === "Quoted" && (
                                   <div className="flex items-center justify-end gap-2">
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      className="border-emerald-200 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
-                                      onClick={() => handleApprove(qt.id)}
-                                    >
+                                    <Button size="sm" variant="outline" className="border-emerald-200 text-emerald-600 hover:bg-emerald-50" onClick={() => handleApprove(qt.id)}>
                                       <CheckCircle className="mr-1 h-3 w-3" /> Approve
                                     </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                      onClick={() => handleReject(qt.id)}
-                                    >
+                                    <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10" onClick={() => handleReject(qt.id)}>
                                       <XCircle className="mr-1 h-3 w-3" /> Reject
                                     </Button>
                                   </div>
-                                ) : (
-                                  <Button size="sm" variant="outline">View</Button>
                                 )}
                               </TableCell>
                             </TableRow>
                           ))}
-                          {optimisticQuotations.length === 0 && (
-                            <TableRow>
-                              <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
-                                No quotations found.
-                              </TableCell>
-                            </TableRow>
-                          )}
                         </TableBody>
                       </Table>
                     </div>
@@ -375,22 +416,13 @@ export function CustomerDashboard() {
                               <TableCell className="font-medium">{order.orderId}</TableCell>
                               <TableCell>{order.product}</TableCell>
                               <TableCell>
-                                <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700 shadow-sm hover:bg-blue-50">
+                                <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
                                   <Clock className="mr-1 h-3 w-3" /> {order.status}
                                 </Badge>
                               </TableCell>
-                              <TableCell className="text-right text-muted-foreground">
-                                {order.expectedDelivery}
-                              </TableCell>
+                              <TableCell className="text-right text-muted-foreground">{order.expectedDelivery}</TableCell>
                             </TableRow>
                           ))}
-                          {orders.length === 0 && (
-                            <TableRow>
-                              <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                                No active orders found.
-                              </TableCell>
-                            </TableRow>
-                          )}
                         </TableBody>
                       </Table>
                     </div>
@@ -406,47 +438,47 @@ export function CustomerDashboard() {
                   <CardDescription>Track your shipments and confirm receipt.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="overflow-hidden rounded-lg border border-border/50">
-                    <Table>
-                      <TableHeader className="bg-muted/30">
-                        <TableRow>
-                          <TableHead className="font-medium">Shipment ID</TableHead>
-                          <TableHead className="font-medium">Order ID</TableHead>
-                          <TableHead className="font-medium">Dispatch Date</TableHead>
-                          <TableHead className="font-medium">Status</TableHead>
-                          <TableHead className="text-right font-medium">Actions</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {deliveries.map((delivery) => (
-                          <TableRow key={delivery.id} className="transition-colors hover:bg-muted/20">
-                            <TableCell className="font-medium">{delivery.id}</TableCell>
-                            <TableCell>{delivery.orderId}</TableCell>
-                            <TableCell>{delivery.dispatchDate}</TableCell>
-                            <TableCell>
-                              <Badge variant={delivery.status === "Delivered" ? "default" : "secondary"} className="shadow-sm">
-                                {delivery.status}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {delivery.status === "In Transit" ? (
-                                <Button size="sm" variant="outline">Track</Button>
-                              ) : (
-                                <Button size="sm" variant="ghost">Details</Button>
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                        {deliveries.length === 0 && (
+                  {deliveriesLoading ? (
+                    <TableSkeleton cols={5} />
+                  ) : (
+                    <div className="overflow-hidden rounded-lg border border-border/50">
+                      <Table>
+                        <TableHeader className="bg-muted/30">
                           <TableRow>
-                            <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                              No shipments found.
-                            </TableCell>
+                            <TableHead className="font-medium">Shipment ID</TableHead>
+                            <TableHead className="font-medium">Order ID</TableHead>
+                            <TableHead className="font-medium">Status</TableHead>
+                            <TableHead className="text-right font-medium">Actions</TableHead>
                           </TableRow>
-                        )}
-                      </TableBody>
-                    </Table>
-                  </div>
+                        </TableHeader>
+                        <TableBody>
+                          {deliveries.map((delivery) => (
+                            <TableRow key={delivery.shipment_id} className="transition-colors hover:bg-muted/20">
+                              <TableCell className="font-medium">{delivery.shipment_id}</TableCell>
+                              <TableCell>{delivery.order_id}</TableCell>
+                              <TableCell>
+                                <Badge variant={delivery.status === "Delivered & Accepted" ? "default" : "secondary"}>
+                                  {delivery.status}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {delivery.status === "Dispatch" && (
+                                  <div className="flex justify-end gap-2">
+                                    <Button size="sm" variant="outline" className="border-emerald-200 text-emerald-600" onClick={() => handleConfirmDelivery(Number(delivery.shipment_id), "Delivered & Accepted")}>
+                                      <PackageCheck className="mr-1 h-3 w-3" /> Accept
+                                    </Button>
+                                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => handleConfirmDelivery(Number(delivery.shipment_id), "Rejected")}>
+                                      <XCircle className="mr-1 h-3 w-3" /> Reject
+                                    </Button>
+                                  </div>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}

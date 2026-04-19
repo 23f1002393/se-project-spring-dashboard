@@ -18,6 +18,19 @@ export async function getQuotations(enquiryId: number): Promise<Quotation[]> {
 }
 
 /**
+ * Create a new quotation for an enquiry.
+ */
+export async function createQuotation(
+  enquiryId: number,
+  data: { price: number; est_delivery: string }
+): Promise<any> {
+  return fetchApi<any>(`/enquiries/${enquiryId}/quotations`, {
+    method: "POST",
+    data,
+  });
+}
+
+/**
  * Accept a quotation.
  */
 export async function acceptQuotation(

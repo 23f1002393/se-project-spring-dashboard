@@ -1,4 +1,4 @@
-import { useState, useEffect, useOptimistic, useActionState } from "react";
+import { useState, useEffect, useOptimistic, useActionState, startTransition } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   BarChart,
@@ -8,6 +8,8 @@ import {
   ClipboardList,
   TrendingUp,
   Clock,
+  Package,
+  Layers,
 } from "lucide-react";
 
 import {
@@ -30,13 +32,33 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { getEnquiries, type Enquiry } from "@/lib/actions/enquiries";
-import { getTasks, updateTaskStatus, type ProductionTask } from "@/lib/actions/tasks";
+import {
+  getTasks,
+  updateTaskStatus,
+  createQualityReport,
+  type ProductionTask,
+} from "@/lib/actions/tasks";
 import {
   getFinancialAnalytics,
   getProductionAnalytics,
   type FinancialAnalytics,
   type ProductionAnalytics,
 } from "@/lib/actions/analytics";
+import { getOrders, type Order } from "@/lib/actions/orders";
+import {
+  getShipments,
+  dispatchShipment,
+  type Shipment,
+} from "@/lib/actions/shipments";
+import { createQuotation } from "@/lib/actions/quotations";
+import { issueInvoice } from "@/lib/actions/invoices";
+import { getMachines, type Machine } from "@/lib/actions/machines";
+import { getMaterials, type Material } from "@/lib/actions/materials";
+import {
+  getInventorySummary,
+  type InventorySummary,
+} from "@/lib/actions/inventory";
+import { runFeasibilityCheck } from "@/lib/actions/feasibility";
 
 // --- Skeleton Components ---
 
@@ -44,46 +66,20 @@ function MetricsSkeleton() {
   return (
     <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
       {Array.from({ length: 4 }).map((_, i) => (
-        <Card key={i} className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl">
+        <Card
+          key={i}
+          className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl"
+        >
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <Skeleton className="h-4 w-24" />
             <Skeleton className="h-8 w-8 rounded-full" />
           </CardHeader>
           <CardContent>
-            <Skeleton className="h-7 w-16 mb-2" />
+            <Skeleton className="mb-2 h-7 w-16" />
             <Skeleton className="h-3 w-28" />
           </CardContent>
         </Card>
       ))}
-    </div>
-  );
-}
-
-function TableSkeleton({ cols, rows = 3 }: { cols: number; rows?: number }) {
-  return (
-    <div className="overflow-hidden rounded-lg border border-border/50">
-      <Table>
-        <TableHeader className="bg-muted/30">
-          <TableRow>
-            {Array.from({ length: cols }).map((_, i) => (
-              <TableHead key={i}>
-                <Skeleton className="h-4 w-20" />
-              </TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {Array.from({ length: rows }).map((_, r) => (
-            <TableRow key={r}>
-              {Array.from({ length: cols }).map((_, c) => (
-                <TableCell key={c}>
-                  <Skeleton className="h-4 w-full max-w-[120px]" />
-                </TableCell>
-              ))}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
     </div>
   );
 }
@@ -97,10 +93,12 @@ interface AnalyticsState {
 
 const TABS = [
   { id: "analytics", label: "Analytics", icon: BarChart },
-  { id: "enquiries", label: "Enquiries & Quotes", icon: FileText },
+  { id: "enquiries", label: "Enquiries", icon: FileText },
+  { id: "orders", label: "Orders", icon: Package },
   { id: "production", label: "Production", icon: ClipboardList },
-  { id: "quality", label: "Quality Control", icon: CheckCircle },
-  { id: "logistics", label: "Shipments", icon: Truck },
+  { id: "quality", label: "Quality", icon: CheckCircle },
+  { id: "logistics", label: "Logistics", icon: Truck },
+  { id: "inventory", label: "Inventory", icon: Layers },
 ];
 
 // --- Action functions for useActionState ---
@@ -124,47 +122,152 @@ async function fetchTasks(): Promise<ProductionTask[]> {
   return getTasks();
 }
 
+async function fetchOrders(): Promise<Order[]> {
+  return getOrders();
+}
+
+async function fetchShipments(): Promise<Shipment[]> {
+  return getShipments();
+}
+
 export function ManagerDashboard() {
   const [activeTab, setActiveTab] = useState("analytics");
 
   // useActionState for each data source
-  const [analytics, loadAnalytics, analyticsLoading] = useActionState(fetchAnalytics, null);
-  const [enquiries, loadEnquiries, enquiriesLoading] = useActionState(fetchEnquiries, []);
+  const [analytics, loadAnalytics, analyticsLoading] = useActionState(
+    fetchAnalytics,
+    null
+  );
+  const [enquiries, loadEnquiries, enquiriesLoading] = useActionState(
+    fetchEnquiries,
+    []
+  );
   const [tasks, loadTasks, tasksLoading] = useActionState(fetchTasks, []);
+  const [orders, loadOrders, ordersLoading] = useActionState(fetchOrders, []);
+  const [shipments, loadShipments, shipmentsLoading] = useActionState(
+    fetchShipments,
+    []
+  );
+  const [inventory, loadInventory, inventoryLoading] = useActionState(
+    getInventorySummary,
+    { machines: [], materials: [], finished_goods: [] }
+  );
 
-  // Optimistic task updates (e.g. marking a task status)
+  // Optimistic task updates
   const [optimisticTasks, setOptimisticTask] = useOptimistic(
     tasks,
     (currentTasks: ProductionTask[], updatedTask: ProductionTask) =>
       currentTasks.map((t) => (t.id === updatedTask.id ? updatedTask : t))
   );
 
-  const handleUpdateTaskStatus = async (taskId: number | string, newStatus: string) => {
+  const handleUpdateTaskStatus = async (
+    taskId: number | string,
+    newStatus: string
+  ) => {
     const taskToUpdate = optimisticTasks.find((t) => t.id === taskId);
     if (taskToUpdate) {
-      setOptimisticTask({ ...taskToUpdate, status: newStatus });
+      startTransition(() => {
+        setOptimisticTask({ ...taskToUpdate, status: newStatus });
+      });
     }
     try {
       await updateTaskStatus(Number(taskId), newStatus);
-      // Reload tasks to get server state
-      loadTasks();
+      startTransition(() => {
+        loadTasks();
+      });
     } catch (err) {
       console.error("Failed to update task", err);
-      loadTasks(); // rollback by refetching
+      startTransition(() => {
+        loadTasks();
+      });
+    }
+  };
+
+  const handleFeasibilityCheck = async (enquiryId: number) => {
+    try {
+      await runFeasibilityCheck(enquiryId);
+      startTransition(() => {
+        loadEnquiries();
+      });
+    } catch (err) {
+      console.error("Feasibility check failed", err);
+    }
+  };
+
+  const handleGenerateQuote = async (enquiryId: number) => {
+    try {
+      await createQuotation(enquiryId, {
+        price: 1500.0,
+        est_delivery: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+          .toISOString()
+          .split("T")[0],
+      });
+      startTransition(() => {
+        loadEnquiries();
+      });
+    } catch (err) {
+      console.error("Failed to generate quote", err);
+    }
+  };
+
+  const handleQualitySubmit = async (taskId: number, result: string) => {
+    try {
+      await createQualityReport(taskId, { inspector: "Spring Master", result });
+      startTransition(() => {
+        loadTasks();
+        loadOrders();
+      });
+    } catch (err) {
+      console.error("Quality report submission failed", err);
+    }
+  };
+
+  const handleIssueInvoice = async (orderId: number) => {
+    try {
+      await issueInvoice(orderId);
+      startTransition(() => {
+        loadOrders();
+      });
+    } catch (err) {
+      console.error("Failed to issue invoice", err);
+    }
+  };
+
+  const handleDispatch = async (orderId: number) => {
+    try {
+      await dispatchShipment(orderId, {
+        carrier: "Standard Delivery",
+        tracking_number: `TRK-${Math.floor(Math.random() * 1000000)}`,
+      });
+      startTransition(() => {
+        loadOrders();
+        loadShipments();
+      });
+    } catch (err) {
+      console.error("Dispatch failed", err);
     }
   };
 
   // Fetch data when tab changes
   useEffect(() => {
-    if (activeTab === "analytics") loadAnalytics();
-    else if (activeTab === "enquiries") loadEnquiries();
-    else if (activeTab === "production") loadTasks();
-  }, [activeTab, loadAnalytics, loadEnquiries, loadTasks]);
+    startTransition(() => {
+      if (activeTab === "analytics") loadAnalytics();
+      else if (activeTab === "enquiries") loadEnquiries();
+      else if (activeTab === "production" || activeTab === "quality")
+        loadTasks();
+      else if (activeTab === "orders") loadOrders();
+      else if (activeTab === "logistics") loadShipments();
+      else if (activeTab === "inventory") loadInventory();
+    });
+  }, [activeTab]);
 
   const isLoading =
-    (activeTab === "analytics" && analyticsLoading) ||
-    (activeTab === "enquiries" && enquiriesLoading) ||
-    (activeTab === "production" && tasksLoading);
+    analyticsLoading ||
+    enquiriesLoading ||
+    tasksLoading ||
+    ordersLoading ||
+    shipmentsLoading ||
+    inventoryLoading;
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 p-6 font-sans md:p-10">
@@ -174,7 +277,7 @@ export function ManagerDashboard() {
             Manager Overview
           </h1>
           {isLoading && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground animate-pulse">
+            <div className="flex animate-pulse items-center gap-2 text-sm text-muted-foreground">
               <Clock className="h-4 w-4" /> Updating...
             </div>
           )}
@@ -191,36 +294,31 @@ export function ManagerDashboard() {
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {[
             {
-              title: "Active Enquiries",
-              value: analytics.production?.total_tasks ?? "—",
-              icon: FileText,
-              trend: "Total tracked tasks",
+              title: "Revenue (MTD)",
+              value:
+                analytics.financial?.total_revenue !== undefined
+                  ? `$${analytics.financial.total_revenue.toLocaleString()}`
+                  : "—",
+              icon: TrendingUp,
+              trend: `Profit: $${analytics.financial?.total_profit?.toLocaleString() ?? 0}`,
             },
             {
-              title: "Ongoing Production",
-              value: analytics.production
-                ? `${analytics.production.in_progress_tasks} tasks`
-                : "—",
+              title: "Active Orders",
+              value: orders.length,
+              icon: Package,
+              trend: "Across all stages",
+            },
+            {
+              title: "Tasks In Progress",
+              value: tasks.filter((t) => t.status === "In Progress").length,
               icon: ClipboardList,
-              trend: `${analytics.production?.completed_tasks ?? 0} completed`,
+              trend: `${tasks.filter((t) => t.status === "Completed").length} completed today`,
             },
             {
               title: "Pending QC",
-              value: analytics.production
-                ? `${analytics.production.pending_qc} batches`
-                : "—",
+              value: tasks.filter((t) => t.status === "Completed").length,
               icon: CheckCircle,
               trend: "Awaiting inspection",
-            },
-            {
-              title: "Revenue (MTD)",
-              value: analytics.financial?.total_revenue !== undefined
-                ? `$${analytics.financial.total_revenue.toLocaleString()}`
-                : "—",
-              icon: TrendingUp,
-              trend: analytics.financial?.total_profit !== undefined
-                ? `Profit: $${analytics.financial.total_profit.toLocaleString()}`
-                : "",
             },
           ].map((metric, idx) => (
             <motion.div
@@ -251,7 +349,7 @@ export function ManagerDashboard() {
       )}
 
       {/* Tabs Navigation */}
-      <div className="scrollbar-hide flex overflow-x-auto border-b border-border/50 pb-[1px]">
+      <div className="scrollbar-hide flex overflow-x-auto border-b border-border/50 pb-px">
         {TABS.map((tab) => {
           const isActive = activeTab === tab.id;
           return (
@@ -299,50 +397,44 @@ export function ManagerDashboard() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="border-t border-border/40 bg-muted/10 p-6">
-                  {analyticsLoading ? (
-                    <div className="space-y-4">
-                      <Skeleton className="h-6 w-48" />
-                      <div className="grid grid-cols-2 gap-4">
-                        <Skeleton className="h-32 rounded-xl" />
-                        <Skeleton className="h-32 rounded-xl" />
-                      </div>
-                    </div>
-                  ) : analytics?.financial ? (
+                  {analytics?.financial ? (
                     <div className="grid grid-cols-2 gap-6 md:grid-cols-4">
                       {[
-                        { 
-                          label: "Revenue", 
-                          value: analytics.financial.total_revenue !== undefined 
-                            ? `$${analytics.financial.total_revenue.toLocaleString()}` 
-                            : "—" 
+                        {
+                          label: "Revenue",
+                          value: `$${analytics.financial.total_revenue?.toLocaleString() ?? 0}`,
                         },
-                        { 
-                          label: "Cost", 
-                          value: analytics.financial.total_cost !== undefined 
-                            ? `$${analytics.financial.total_cost.toLocaleString()}` 
-                            : "—" 
+                        {
+                          label: "Cost",
+                          value: `$${analytics.financial.total_cost?.toLocaleString() ?? 0}`,
                         },
-                        { 
-                          label: "Profit", 
-                          value: analytics.financial.total_profit !== undefined 
-                            ? `$${analytics.financial.total_profit.toLocaleString()}` 
-                            : "—" 
+                        {
+                          label: "Profit",
+                          value: `$${analytics.financial.total_profit?.toLocaleString() ?? 0}`,
                         },
-                        { 
-                          label: "Invoices", 
-                          value: analytics.financial.invoices_count ?? 0 
+                        {
+                          label: "Invoices",
+                          value: analytics.financial.invoices_count ?? 0,
                         },
                       ].map((item, i) => (
-                        <div key={i} className="rounded-xl border border-border/40 bg-background/80 p-4 text-center">
-                          <p className="text-xs font-medium text-muted-foreground">{item.label}</p>
-                          <p className="mt-1 text-xl font-semibold">{item.value}</p>
+                        <div
+                          key={i}
+                          className="rounded-xl border border-border/40 bg-background/80 p-4 text-center"
+                        >
+                          <p className="text-xs font-medium text-muted-foreground">
+                            {item.label}
+                          </p>
+                          <p className="mt-1 text-xl font-semibold">
+                            {item.value}
+                          </p>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <p className="flex items-center gap-2 text-sm text-muted-foreground py-12 justify-center">
-                      <BarChart className="h-4 w-4" /> No analytics data available.
-                    </p>
+                    <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                      <BarChart className="h-12 w-12 opacity-20" />
+                      <p>No analytics data available.</p>
+                    </div>
                   )}
                 </CardContent>
               </Card>
@@ -351,67 +443,130 @@ export function ManagerDashboard() {
             {activeTab === "enquiries" && (
               <Card className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl">
                 <CardHeader>
-                  <CardTitle>Recent Enquiries</CardTitle>
+                  <CardTitle>Enquiry Management</CardTitle>
                   <CardDescription>
-                    Manage customer requests and generate quotations.
+                    Review customer requests and perform feasibility checks.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {enquiriesLoading ? (
-                    <TableSkeleton cols={6} />
-                  ) : (
-                    <div className="overflow-hidden rounded-lg border border-border/50">
-                      <Table>
-                        <TableHeader className="bg-muted/30">
-                          <TableRow>
-                            <TableHead className="font-medium">ID</TableHead>
-                            <TableHead className="font-medium">Customer</TableHead>
-                            <TableHead className="font-medium">Product Spec</TableHead>
-                            <TableHead className="font-medium">Date</TableHead>
-                            <TableHead className="font-medium">Status</TableHead>
-                            <TableHead className="text-right font-medium">Action</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {enquiries.map((enq) => (
-                            <TableRow
-                              key={enq.id}
-                              className="transition-colors hover:bg-muted/20"
-                            >
-                              <TableCell className="font-medium">{enq.id}</TableCell>
-                              <TableCell>{enq.customer_id}</TableCell>
-                              <TableCell>{enq.product_spec}</TableCell>
-                              <TableCell>{enq.created_at}</TableCell>
-                              <TableCell>
-                                <Badge
-                                  variant={enq.status === "Pending Quote" ? "secondary" : "outline"}
-                                  className="bg-background shadow-sm"
-                                >
-                                  {enq.status}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="text-right">
+                  <div className="overflow-hidden rounded-lg border border-border/50">
+                    <Table>
+                      <TableHeader className="bg-muted/30">
+                        <TableRow>
+                          <TableHead>ID</TableHead>
+                          <TableHead>Customer</TableHead>
+                          <TableHead>Product Spec</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Action</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {enquiries.map((enq) => (
+                          <TableRow key={enq.id}>
+                            <TableCell className="font-medium">
+                              {enq.id}
+                            </TableCell>
+                            <TableCell>{enq.customer_id}</TableCell>
+                            <TableCell>{enq.product_spec}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{enq.status}</Badge>
+                            </TableCell>
+                            <TableCell className="flex justify-end gap-2 text-right">
+                              {enq.status === "New" && (
                                 <Button
                                   size="sm"
-                                  variant="ghost"
-                                  className="hover:bg-primary/10 hover:text-primary"
+                                  onClick={() =>
+                                    handleFeasibilityCheck(Number(enq.id))
+                                  }
                                 >
-                                  View
+                                  Run Feasibility
                                 </Button>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                          {enquiries.length === 0 && (
-                            <TableRow>
-                              <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
-                                No enquiries found.
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  )}
+                              )}
+                              {enq.status === "Feasibility Approved" && (
+                                <Button
+                                  size="sm"
+                                  className="bg-primary text-primary-foreground"
+                                  onClick={() =>
+                                    handleGenerateQuote(Number(enq.id))
+                                  }
+                                >
+                                  Generate Quote
+                                </Button>
+                              )}
+                              <Button size="sm" variant="ghost">
+                                View Details
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {activeTab === "orders" && (
+              <Card className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl">
+                <CardHeader>
+                  <CardTitle>Confirmed Orders</CardTitle>
+                  <CardDescription>
+                    Manage and track all customer orders.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-hidden rounded-lg border border-border/50">
+                    <Table>
+                      <TableHeader className="bg-muted/30">
+                        <TableRow>
+                          <TableHead>Order ID</TableHead>
+                          <TableHead>Quote ID</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Action</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {orders.map((order) => (
+                          <TableRow key={order.order_id}>
+                            <TableCell className="font-medium">
+                              {order.order_id}
+                            </TableCell>
+                            <TableCell>{order.quote_id}</TableCell>
+                            <TableCell>
+                              <Badge
+                                variant="outline"
+                                className="border-primary/20 bg-primary/5 text-primary"
+                              >
+                                {order.production_status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {order.production_status.includes(
+                                "Ready for Billing"
+                              ) && (
+                                <Button
+                                  size="sm"
+                                  onClick={() =>
+                                    handleIssueInvoice(order.order_id)
+                                  }
+                                >
+                                  Issue Invoice
+                                </Button>
+                              )}
+                              {order.production_status.includes("Invoiced") && (
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleDispatch(order.order_id)}
+                                >
+                                  Dispatch
+                                </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 </CardContent>
               </Card>
             )}
@@ -419,100 +574,306 @@ export function ManagerDashboard() {
             {activeTab === "production" && (
               <Card className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl">
                 <CardHeader>
-                  <CardTitle>Production Planning & Execution</CardTitle>
+                  <CardTitle>Production Control</CardTitle>
                   <CardDescription>
-                    Track manufacturing tasks and machine allocation.
+                    Monitor ongoing manufacturing tasks.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {tasksLoading ? (
-                    <TableSkeleton cols={6} />
-                  ) : (
-                    <div className="overflow-hidden rounded-lg border border-border/50">
-                      <Table>
-                        <TableHeader className="bg-muted/30">
-                          <TableRow>
-                            <TableHead className="font-medium">Task ID</TableHead>
-                            <TableHead className="font-medium">Order</TableHead>
-                            <TableHead className="font-medium">Machine</TableHead>
-                            <TableHead className="font-medium">Status</TableHead>
-                            <TableHead className="font-medium">Progress</TableHead>
-                            <TableHead className="text-right font-medium">Action</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {optimisticTasks.map((task) => (
-                            <TableRow
-                              key={task.id}
-                              className="transition-colors hover:bg-muted/20"
-                            >
-                              <TableCell className="font-medium">{task.id}</TableCell>
-                              <TableCell>{task.order_id}</TableCell>
-                              <TableCell>{task.machine_id}</TableCell>
-                              <TableCell>
-                                <Badge
-                                  variant={task.status === "In Progress" ? "default" : task.status === "Completed" ? "outline" : "secondary"}
-                                  className={task.status === "In Progress" ? "shadow-sm" : "bg-background shadow-sm"}
-                                >
-                                  {task.status}
-                                </Badge>
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex items-center gap-3">
-                                  <span className="text-sm font-medium">{task.progress || 0}%</span>
-                                  <div className="h-1.5 w-20 overflow-hidden rounded-full bg-secondary/50">
-                                    <motion.div
-                                      initial={{ width: 0 }}
-                                      animate={{ width: `${task.progress || 0}%` }}
-                                      transition={{ duration: 1, ease: "easeOut" }}
-                                      className="h-full rounded-full bg-primary"
-                                    />
-                                  </div>
+                  <div className="overflow-hidden rounded-lg border border-border/50">
+                    <Table>
+                      <TableHeader className="bg-muted/30">
+                        <TableRow>
+                          <TableHead>Task ID</TableHead>
+                          <TableHead>Order ID</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Progress</TableHead>
+                          <TableHead className="text-right">Action</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {optimisticTasks.map((task) => (
+                          <TableRow key={task.id}>
+                            <TableCell className="font-medium">
+                              {task.id}
+                            </TableCell>
+                            <TableCell>{task.order_id}</TableCell>
+                            <TableCell>
+                              <Badge
+                                variant={
+                                  task.status === "In Progress"
+                                    ? "default"
+                                    : "secondary"
+                                }
+                              >
+                                {task.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <div className="h-1.5 w-full max-w-[100px] rounded-full bg-secondary">
+                                  <div
+                                    className="h-full rounded-full bg-primary"
+                                    style={{ width: `${task.progress || 0}%` }}
+                                  />
                                 </div>
-                              </TableCell>
-                              <TableCell className="text-right">
-                                {task.status !== "Completed" && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => handleUpdateTaskStatus(task.id, task.status === "Scheduled" ? "In Progress" : "Completed")}
-                                    className="h-8 px-2 text-xs"
-                                  >
-                                    {task.status === "Scheduled" ? "Start" : "Complete"}
-                                  </Button>
-                                )}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                          {optimisticTasks.length === 0 && (
-                            <TableRow>
-                              <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
-                                No production tasks found.
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  )}
+                                <span className="text-xs">
+                                  {task.progress || 0}%
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {task.status === "Scheduled" && (
+                                <Button
+                                  size="sm"
+                                  onClick={() =>
+                                    handleUpdateTaskStatus(
+                                      task.id,
+                                      "In Progress"
+                                    )
+                                  }
+                                >
+                                  Start
+                                </Button>
+                              )}
+                              {task.status === "In Progress" && (
+                                <Button
+                                  size="sm"
+                                  onClick={() =>
+                                    handleUpdateTaskStatus(task.id, "Completed")
+                                  }
+                                >
+                                  Complete
+                                </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 </CardContent>
               </Card>
             )}
 
-            {(activeTab === "quality" || activeTab === "logistics") && (
+            {activeTab === "quality" && (
               <Card className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl">
                 <CardHeader>
-                  <CardTitle>
-                    {TABS.find((t) => t.id === activeTab)?.label}
-                  </CardTitle>
-                  <CardDescription>Module coming soon.</CardDescription>
+                  <CardTitle>Quality Assurance</CardTitle>
+                  <CardDescription>
+                    Inspect completed tasks and approve for shipping.
+                  </CardDescription>
                 </CardHeader>
-                <CardContent className="flex h-32 items-center justify-center border-t border-border/40 bg-muted/10">
-                  <p className="flex items-center gap-2 text-muted-foreground">
-                    <Clock className="h-4 w-4" /> Work in progress
-                  </p>
+                <CardContent>
+                  <div className="overflow-hidden rounded-lg border border-border/50">
+                    <Table>
+                      <TableHeader className="bg-muted/30">
+                        <TableRow>
+                          <TableHead>Task ID</TableHead>
+                          <TableHead>Order ID</TableHead>
+                          <TableHead>Result</TableHead>
+                          <TableHead className="text-right">Action</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {tasks
+                          .filter((t) => t.status === "Completed")
+                          .map((task) => (
+                            <TableRow key={task.id}>
+                              <TableCell className="font-medium">
+                                {task.id}
+                              </TableCell>
+                              <TableCell>{task.order_id}</TableCell>
+                              <TableCell>
+                                <Badge variant="outline">
+                                  Awaiting Inspection
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="flex justify-end gap-2 text-right">
+                                <Button
+                                  size="sm"
+                                  className="bg-emerald-600 hover:bg-emerald-700"
+                                  onClick={() =>
+                                    handleQualitySubmit(
+                                      Number(task.id),
+                                      "Approved"
+                                    )
+                                  }
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() =>
+                                    handleQualitySubmit(
+                                      Number(task.id),
+                                      "Rejected"
+                                    )
+                                  }
+                                >
+                                  Reject
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        {tasks.filter((t) => t.status === "Completed")
+                          .length === 0 && (
+                          <TableRow>
+                            <TableCell
+                              colSpan={4}
+                              className="h-24 text-center text-muted-foreground"
+                            >
+                              No tasks pending inspection.
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
                 </CardContent>
               </Card>
+            )}
+
+            {activeTab === "logistics" && (
+              <Card className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl">
+                <CardHeader>
+                  <CardTitle>Shipment Tracking</CardTitle>
+                  <CardDescription>
+                    Monitor dispatch and delivery progress.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-hidden rounded-lg border border-border/50">
+                    <Table>
+                      <TableHeader className="bg-muted/30">
+                        <TableRow>
+                          <TableHead>Shipment ID</TableHead>
+                          <TableHead>Order ID</TableHead>
+                          <TableHead>Carrier</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Tracking</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {shipments.map((s) => (
+                          <TableRow key={s.shipment_id}>
+                            <TableCell className="font-medium">
+                              {s.shipment_id}
+                            </TableCell>
+                            <TableCell>{s.order_id}</TableCell>
+                            <TableCell>{s.carrier}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{s.status}</Badge>
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs">
+                              {s.tracking_number}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {activeTab === "inventory" && (
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+                <Card className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl">
+                  <CardHeader>
+                    <CardTitle>Materials</CardTitle>
+                    <CardDescription>Raw material stock.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="overflow-hidden rounded-lg border border-border/50">
+                      <Table>
+                        <TableBody>
+                          {inventory.materials.map((m) => (
+                            <TableRow key={m.id}>
+                              <TableCell className="text-xs font-medium">
+                                {m.name}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <Badge
+                                  variant={
+                                    m.qty < 50 ? "destructive" : "outline"
+                                  }
+                                  className="text-[10px]"
+                                >
+                                  {m.qty}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl">
+                  <CardHeader>
+                    <CardTitle>Machines</CardTitle>
+                    <CardDescription>Equipment status.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="overflow-hidden rounded-lg border border-border/50">
+                      <Table>
+                        <TableBody>
+                          {inventory.machines.map((mac) => (
+                            <TableRow key={mac.id}>
+                              <TableCell className="text-xs font-medium">
+                                {mac.name}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <Badge
+                                  variant={
+                                    mac.status === "Operational"
+                                      ? "default"
+                                      : "secondary"
+                                  }
+                                  className="text-[10px]"
+                                >
+                                  {mac.status}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl">
+                  <CardHeader>
+                    <CardTitle>Finished Goods</CardTitle>
+                    <CardDescription>Completed products.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="overflow-hidden rounded-lg border border-border/50">
+                      <Table>
+                        <TableBody>
+                          {inventory.finished_goods.map((fg) => (
+                            <TableRow key={fg.id}>
+                              <TableCell className="text-xs font-medium">
+                                {fg.part_number}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px]"
+                                >
+                                  {fg.qty} units
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
             )}
           </motion.div>
         </AnimatePresence>

@@ -20,6 +20,8 @@ registration_parser.add_argument(
 registration_parser.add_argument(
     "confirmPassword", type=str, required=True, help="Password confirmation is required"
 )
+registration_parser.add_argument("company_name", type=str, required=False)
+registration_parser.add_argument("phone", type=str, required=False)
 
 login_parser = reqparse.RequestParser()
 login_parser.add_argument("email", type=str, required=True, help="Email is required")
@@ -104,6 +106,12 @@ class UserRegistrationAPI(Resource):
                 confirmPassword:
                   type: string
                   example: Passw0rd@
+                company_name:
+                  type: string
+                  example: Acme Corp
+                phone:
+                  type: string
+                  example: "1234567890"
         responses:
           201:
             description: User registered successfully
@@ -140,7 +148,12 @@ class UserRegistrationAPI(Resource):
             return error_response(409, "An account with this email already exists")
 
         # --- Create User ---
-        user = User(name=args["name"], email=args["email"])
+        user = User(
+            name=args["name"],
+            email=args["email"],
+            company_name=args.get("company_name"),
+            phone=args.get("phone"),
+        )
         user.set_password(args["password"])
 
         db.session.add(user)

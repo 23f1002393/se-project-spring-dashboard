@@ -1,7 +1,7 @@
 from flask_restful import Resource
 from flask import request
 from models import Order, Invoice, Quotation, db
-from datetime import datetime
+from datetime import datetime, timezone
 from utils import error_response
 
 
@@ -36,7 +36,7 @@ class InvoiceAPI(Resource):
           404:
             description: Order not found
         """
-        order = Order.query.get(order_id)
+        order = db.session.get(Order, order_id)
         if not order:
             return error_response(404, f"Order ID {order_id} not found")
 
@@ -51,13 +51,21 @@ class InvoiceAPI(Resource):
         # Determine amount: Manual override (Custom spring) OR fetch from Quotation
         amount = data.get("manual_amount")
         if not amount:
-            quote = Quotation.query.get(order.quote_id)
+            quote = db.session.get(Quotation, order.quote_id)
             amount = quote.price if quote else 0.0
+        else:
+            from utils import log_audit
+            log_audit(
+                entity_type="Invoice",
+                entity_id=None, # will update after creation
+                action="Pricing Override",
+                details=f"Manual amount {amount} applied to order {order_id}"
+            )
 
         new_invoice = Invoice(
             order_id=order_id,
             amount=amount,
-            issued_date=datetime.utcnow().date(),
+            issued_date=datetime.now(timezone.utc).date(),
             paid=False,
         )
 
@@ -90,7 +98,7 @@ class InvoicePaymentAPI(Resource):
           200:
             description: Invoice marked as paid
         """
-        invoice = Invoice.query.get(invoice_id)
+        invoice = db.session.get(Invoice, invoice_id)
         if not invoice:
             return error_response(404, "Invoice not found")
 
