@@ -85,7 +85,7 @@ class User(Base):
     company_name: Mapped[str] = mapped_column(String(100), nullable=True)
     phone: Mapped[str] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
     enquiries: Mapped[list["Enquiry"]] = relationship(
@@ -120,7 +120,7 @@ class Enquiry(Base):
     status: Mapped[str] = mapped_column(String(50), default="New")
     rejection_reason: Mapped[str] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
     quotations: Mapped[list["Quotation"]] = relationship(
@@ -183,6 +183,9 @@ class Machine(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=True)
     type: Mapped[str] = mapped_column(String(50), nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=True)
+    maintenance_threshold: Mapped[int] = mapped_column(Integer, default=10000)
+    maintenance_warning_threshold: Mapped[int] = mapped_column(Integer, default=8000)
+    last_maintenance_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     tasks: Mapped[list["ProductionTask"]] = relationship(
         "ProductionTask", backref="machine", lazy=True
@@ -215,9 +218,10 @@ class ProductionTask(Base):
     )
     status: Mapped[str] = mapped_column(String(50), default="Scheduled")
     progress: Mapped[int] = mapped_column(Integer, default=0)
-    scheduled_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
-    deadline: Mapped[datetime] = mapped_column(DateTime, nullable=True)
-    completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    estimated_springs_produced: Mapped[int] = mapped_column(Integer, default=0)
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    deadline: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     quality_reports: Mapped[list["QualityReport"]] = relationship(
         "QualityReport", backref="task", lazy=True
@@ -234,7 +238,7 @@ class QualityReport(Base):
     result: Mapped[str] = mapped_column(String(50), nullable=True)
     rejection_reason: Mapped[str] = mapped_column(String(255), nullable=True)
     report_date: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
 
@@ -251,7 +255,7 @@ class AuditLog(Base):
     )
     details: Mapped[str] = mapped_column(String(255), nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
 

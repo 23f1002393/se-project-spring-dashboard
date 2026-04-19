@@ -2,13 +2,21 @@ from flask import Flask
 from flask_restful import Api
 from flasgger import Swagger
 
-from resources.analytics import FinancialAnalyticsAPI, ProductionAnalyticsAPI
+from resources.analytics import (
+    FinancialAnalyticsAPI,
+    ProductionAnalyticsAPI,
+    RawMaterialForecastAPI,
+)
 from resources.auth import UserRegistrationAPI, UserLoginAPI, UserLogoutAPI
 from resources.enquiry import EnquiryAPI, EnquiryDetailAPI
 from resources.feasibility import FeasibilityAPI
 from resources.inventory import InventorySummaryAPI
 from resources.invoice import InvoiceAPI, InvoicePaymentAPI
-from resources.machine import MachineListAPI
+from resources.machine import (
+    MachineListAPI,
+    MachineMaintenanceActionAPI,
+    MachineMaintenanceListAPI,
+)
 from resources.material import MaterialListAPI
 from resources.order import OrderListAPI, OrderDetailAPI
 from resources.quotation import QuotationAPI, QuotationReviseAPI, QuotationAcceptAPI
@@ -56,6 +64,8 @@ api.add_resource(OrderDetailAPI, "/api/v1/orders/<int:order_id>")
 # Epic 2 Route Registration
 api.add_resource(MaterialListAPI, "/api/v1/materials")
 api.add_resource(MachineListAPI, "/api/v1/machines")
+api.add_resource(MachineMaintenanceListAPI, "/api/v1/machines/maintenance")
+api.add_resource(MachineMaintenanceActionAPI, "/api/v1/machines/<int:machine_id>/maintenance")
 api.add_resource(InventorySummaryAPI, "/api/v1/inventory")
 api.add_resource(ProductionTaskAPI, "/api/v1/tasks")
 
@@ -73,6 +83,7 @@ api.add_resource(ShipmentDeliveryAPI, "/api/v1/shipments/<int:shipment_id>/deliv
 # Epic 6 Route Registration
 api.add_resource(FinancialAnalyticsAPI, "/api/v1/analytics/financials")
 api.add_resource(ProductionAnalyticsAPI, "/api/v1/analytics/production")
+api.add_resource(RawMaterialForecastAPI, "/api/v1/analytics/raw-material-forecast")
 
 if __name__ == "__main__":
     app.run(debug=False)

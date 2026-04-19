@@ -10,6 +10,9 @@ import {
   Clock,
   Package,
   Layers,
+  Wrench,
+  Calculator,
+  AlertTriangle,
 } from "lucide-react";
 
 import {
@@ -41,8 +44,10 @@ import {
 import {
   getFinancialAnalytics,
   getProductionAnalytics,
+  getRawMaterialForecast,
   type FinancialAnalytics,
   type ProductionAnalytics,
+  type RawMaterialForecast,
 } from "@/lib/actions/analytics";
 import { getOrders, type Order } from "@/lib/actions/orders";
 import {
@@ -50,10 +55,13 @@ import {
   dispatchShipment,
   type Shipment,
 } from "@/lib/actions/shipments";
-import { createQuotation } from "@/lib/actions/quotations";
+import { createQuotation, getQuotations } from "@/lib/actions/quotations";
 import { issueInvoice } from "@/lib/actions/invoices";
-import { getMachines, type Machine } from "@/lib/actions/machines";
-import { getMaterials, type Material } from "@/lib/actions/materials";
+import {
+  getMachineMaintenanceList,
+  recordMaintenanceAction,
+  type MachineMaintenanceSummary,
+} from "@/lib/actions/machines";
 import {
   getInventorySummary,
   type InventorySummary,
@@ -84,11 +92,48 @@ function MetricsSkeleton() {
   );
 }
 
+function TableSkeleton({ cols, rows = 5 }: { cols: number; rows?: number }) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-border/50">
+      <Table>
+        <TableHeader className="bg-muted/30">
+          <TableRow>
+            {Array.from({ length: cols }).map((_, i) => (
+              <TableHead key={i}>
+                <Skeleton className="h-4 w-20" />
+              </TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {Array.from({ length: rows }).map((_, r) => (
+            <TableRow key={r}>
+              {Array.from({ length: cols }).map((_, c) => (
+                <TableCell key={c}>
+                  <Skeleton className="h-4 w-full max-w-[120px]" />
+                </TableCell>
+              ))}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
 // --- Types ---
 
 interface AnalyticsState {
   financial: FinancialAnalytics | null;
   production: ProductionAnalytics | null;
+}
+
+interface EnquiryQuotation {
+  quote_id: number;
+  version_number: number;
+  price: number;
+  est_delivery: string | null;
+  is_accepted: boolean;
 }
 
 const TABS = [
@@ -99,11 +144,12 @@ const TABS = [
   { id: "quality", label: "Quality", icon: CheckCircle },
   { id: "logistics", label: "Logistics", icon: Truck },
   { id: "inventory", label: "Inventory", icon: Layers },
+  { id: "forecasting", label: "Forecasting", icon: Calculator },
 ];
 
 // --- Action functions for useActionState ---
 
-async function fetchAnalytics(): Promise<AnalyticsState | null> {
+async function fetchAnalyticsAction(_prev: AnalyticsState | null): Promise<AnalyticsState | null> {
   const [financial, production] = await Promise.allSettled([
     getFinancialAnalytics(),
     getProductionAnalytics(),
@@ -114,43 +160,75 @@ async function fetchAnalytics(): Promise<AnalyticsState | null> {
   };
 }
 
-async function fetchEnquiries(): Promise<Enquiry[]> {
+async function fetchEnquiriesAction(_prev: Enquiry[]): Promise<Enquiry[]> {
   return getEnquiries();
 }
 
-async function fetchTasks(): Promise<ProductionTask[]> {
+async function fetchTasksAction(_prev: ProductionTask[]): Promise<ProductionTask[]> {
   return getTasks();
 }
 
-async function fetchOrders(): Promise<Order[]> {
+async function fetchOrdersAction(_prev: Order[]): Promise<Order[]> {
   return getOrders();
 }
 
-async function fetchShipments(): Promise<Shipment[]> {
+async function fetchShipmentsAction(_prev: Shipment[]): Promise<Shipment[]> {
   return getShipments();
+}
+
+async function fetchInventoryAction(_prev: InventorySummary): Promise<InventorySummary> {
+  return getInventorySummary();
+}
+
+async function fetchForecastAction(_prev: RawMaterialForecast | null): Promise<RawMaterialForecast | null> {
+  return getRawMaterialForecast();
+}
+
+async function fetchMaintenanceAction(_prev: MachineMaintenanceSummary[]): Promise<MachineMaintenanceSummary[]> {
+  return getMachineMaintenanceList();
 }
 
 export function ManagerDashboard() {
   const [activeTab, setActiveTab] = useState("analytics");
+  const [selectedEnquiry, setSelectedEnquiry] = useState<Enquiry | null>(null);
+  const [selectedEnquiryQuotes, setSelectedEnquiryQuotes] = useState<
+    EnquiryQuotation[]
+  >([]);
+  const [selectedEnquiryOrders, setSelectedEnquiryOrders] = useState<Order[]>([]);
+  const [selectedEnquiryShipments, setSelectedEnquiryShipments] = useState<
+    Shipment[]
+  >([]);
+  const [enquiryDetailsLoading, setEnquiryDetailsLoading] = useState(false);
+  const [enquiryDetailsError, setEnquiryDetailsError] = useState<string | null>(
+    null
+  );
 
   // useActionState for each data source
   const [analytics, loadAnalytics, analyticsLoading] = useActionState(
-    fetchAnalytics,
+    fetchAnalyticsAction,
     null
   );
   const [enquiries, loadEnquiries, enquiriesLoading] = useActionState(
-    fetchEnquiries,
+    fetchEnquiriesAction,
     []
   );
-  const [tasks, loadTasks, tasksLoading] = useActionState(fetchTasks, []);
-  const [orders, loadOrders, ordersLoading] = useActionState(fetchOrders, []);
+  const [tasks, loadTasks, tasksLoading] = useActionState(fetchTasksAction, []);
+  const [orders, loadOrders, ordersLoading] = useActionState(fetchOrdersAction, []);
   const [shipments, loadShipments, shipmentsLoading] = useActionState(
-    fetchShipments,
+    fetchShipmentsAction,
     []
   );
   const [inventory, loadInventory, inventoryLoading] = useActionState(
-    getInventorySummary,
+    fetchInventoryAction,
     { machines: [], materials: [], finished_goods: [] }
+  );
+  const [forecast, loadForecast, forecastLoading] = useActionState(
+    fetchForecastAction,
+    null
+  );
+  const [maintenance, loadMaintenance, maintenanceLoading] = useActionState(
+    fetchMaintenanceAction,
+    []
   );
 
   // Optimistic task updates
@@ -172,23 +250,19 @@ export function ManagerDashboard() {
     }
     try {
       await updateTaskStatus(Number(taskId), newStatus);
-      startTransition(() => {
-        loadTasks();
-      });
+      loadTasks();
+      loadAnalytics();
     } catch (err) {
       console.error("Failed to update task", err);
-      startTransition(() => {
-        loadTasks();
-      });
+      loadTasks();
     }
   };
 
   const handleFeasibilityCheck = async (enquiryId: number) => {
     try {
       await runFeasibilityCheck(enquiryId);
-      startTransition(() => {
-        loadEnquiries();
-      });
+      loadEnquiries();
+      loadAnalytics();
     } catch (err) {
       console.error("Feasibility check failed", err);
     }
@@ -202,21 +276,76 @@ export function ManagerDashboard() {
           .toISOString()
           .split("T")[0],
       });
-      startTransition(() => {
-        loadEnquiries();
-      });
+      loadEnquiries();
+      loadAnalytics();
     } catch (err) {
       console.error("Failed to generate quote", err);
+    }
+  };
+
+  const handleViewEnquiryDetails = async (enquiry: Enquiry) => {
+    setSelectedEnquiry(enquiry);
+    setSelectedEnquiryQuotes([]);
+    setSelectedEnquiryOrders([]);
+    setSelectedEnquiryShipments([]);
+    setEnquiryDetailsError(null);
+    setEnquiryDetailsLoading(true);
+
+    try {
+      const [quotesResult, ordersResult, shipmentsResult] =
+        await Promise.allSettled([
+          getQuotations(Number(enquiry.id)),
+          getOrders(),
+          getShipments(),
+        ]);
+
+      const quotes: EnquiryQuotation[] =
+        quotesResult.status === "fulfilled"
+          ? (quotesResult.value as unknown as EnquiryQuotation[])
+          : [];
+      const allOrders: Order[] =
+        ordersResult.status === "fulfilled" ? ordersResult.value : [];
+      const allShipments: Shipment[] =
+        shipmentsResult.status === "fulfilled" ? shipmentsResult.value : [];
+
+      const quoteIds = new Set(quotes.map((quote) => Number(quote.quote_id)));
+      const linkedOrders = allOrders.filter((order) =>
+        quoteIds.has(Number(order.quote_id))
+      );
+      const linkedOrderIds = new Set(
+        linkedOrders.map((order) => Number(order.order_id))
+      );
+      const linkedShipments = allShipments.filter((shipment) =>
+        linkedOrderIds.has(Number(shipment.order_id))
+      );
+
+      setSelectedEnquiryQuotes(quotes);
+      setSelectedEnquiryOrders(linkedOrders);
+      setSelectedEnquiryShipments(linkedShipments);
+
+      if (
+        quotesResult.status === "rejected" ||
+        ordersResult.status === "rejected" ||
+        shipmentsResult.status === "rejected"
+      ) {
+        setEnquiryDetailsError(
+          "Some tracking details could not be loaded right now."
+        );
+      }
+    } catch (err) {
+      console.error("Failed to load enquiry details", err);
+      setEnquiryDetailsError("Unable to load details. Please try again.");
+    } finally {
+      setEnquiryDetailsLoading(false);
     }
   };
 
   const handleQualitySubmit = async (taskId: number, result: string) => {
     try {
       await createQualityReport(taskId, { inspector: "Spring Master", result });
-      startTransition(() => {
-        loadTasks();
-        loadOrders();
-      });
+      loadTasks();
+      loadOrders();
+      loadAnalytics();
     } catch (err) {
       console.error("Quality report submission failed", err);
     }
@@ -225,9 +354,8 @@ export function ManagerDashboard() {
   const handleIssueInvoice = async (orderId: number) => {
     try {
       await issueInvoice(orderId);
-      startTransition(() => {
-        loadOrders();
-      });
+      loadOrders();
+      loadAnalytics();
     } catch (err) {
       console.error("Failed to issue invoice", err);
     }
@@ -239,26 +367,38 @@ export function ManagerDashboard() {
         carrier: "Standard Delivery",
         tracking_number: `TRK-${Math.floor(Math.random() * 1000000)}`,
       });
-      startTransition(() => {
-        loadOrders();
-        loadShipments();
-      });
+      loadOrders();
+      loadShipments();
+      loadAnalytics();
     } catch (err) {
       console.error("Dispatch failed", err);
     }
   };
 
+  const handleMaintenanceRecord = async (machineId: number) => {
+    try {
+      await recordMaintenanceAction(machineId);
+      // loadMaintenance is the dispatch function from useActionState. 
+      // Calling it triggers the action function.
+      loadMaintenance();
+    } catch (err) {
+      console.error("Failed to record maintenance", err);
+    }
+  };
+
   // Fetch data when tab changes
   useEffect(() => {
-    startTransition(() => {
-      if (activeTab === "analytics") loadAnalytics();
-      else if (activeTab === "enquiries") loadEnquiries();
-      else if (activeTab === "production" || activeTab === "quality")
-        loadTasks();
-      else if (activeTab === "orders") loadOrders();
-      else if (activeTab === "logistics") loadShipments();
-      else if (activeTab === "inventory") loadInventory();
-    });
+    if (activeTab === "analytics") loadAnalytics();
+    else if (activeTab === "enquiries") loadEnquiries();
+    else if (activeTab === "production" || activeTab === "quality")
+      loadTasks();
+    else if (activeTab === "orders") loadOrders();
+    else if (activeTab === "logistics") loadShipments();
+    else if (activeTab === "inventory") loadInventory();
+    else if (activeTab === "forecasting") {
+      loadForecast();
+      loadMaintenance();
+    }
   }, [activeTab]);
 
   const isLoading =
@@ -267,7 +407,9 @@ export function ManagerDashboard() {
     tasksLoading ||
     ordersLoading ||
     shipmentsLoading ||
-    inventoryLoading;
+    inventoryLoading ||
+    forecastLoading ||
+    maintenanceLoading;
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 p-6 font-sans md:p-10">
@@ -304,19 +446,19 @@ export function ManagerDashboard() {
             },
             {
               title: "Active Orders",
-              value: orders.length,
+              value: analytics.production?.total_tasks ?? 0,
               icon: Package,
               trend: "Across all stages",
             },
             {
               title: "Tasks In Progress",
-              value: tasks.filter((t) => t.status === "In Progress").length,
+              value: analytics.production?.in_progress_tasks ?? 0,
               icon: ClipboardList,
-              trend: `${tasks.filter((t) => t.status === "Completed").length} completed today`,
+              trend: `${analytics.production?.completed_tasks ?? 0} completed`,
             },
             {
               title: "Pending QC",
-              value: tasks.filter((t) => t.status === "Completed").length,
+              value: analytics.production?.pending_qc ?? 0,
               icon: CheckCircle,
               trend: "Awaiting inspection",
             },
@@ -449,59 +591,234 @@ export function ManagerDashboard() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="overflow-hidden rounded-lg border border-border/50">
-                    <Table>
-                      <TableHeader className="bg-muted/30">
-                        <TableRow>
-                          <TableHead>ID</TableHead>
-                          <TableHead>Customer</TableHead>
-                          <TableHead>Product Spec</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead className="text-right">Action</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {enquiries.map((enq) => (
-                          <TableRow key={enq.id}>
-                            <TableCell className="font-medium">
-                              {enq.id}
-                            </TableCell>
-                            <TableCell>{enq.customer_id}</TableCell>
-                            <TableCell>{enq.product_spec}</TableCell>
-                            <TableCell>
-                              <Badge variant="outline">{enq.status}</Badge>
-                            </TableCell>
-                            <TableCell className="flex justify-end gap-2 text-right">
-                              {enq.status === "New" && (
-                                <Button
-                                  size="sm"
-                                  onClick={() =>
-                                    handleFeasibilityCheck(Number(enq.id))
-                                  }
-                                >
-                                  Run Feasibility
-                                </Button>
-                              )}
-                              {enq.status === "Feasibility Approved" && (
-                                <Button
-                                  size="sm"
-                                  className="bg-primary text-primary-foreground"
-                                  onClick={() =>
-                                    handleGenerateQuote(Number(enq.id))
-                                  }
-                                >
-                                  Generate Quote
-                                </Button>
-                              )}
-                              <Button size="sm" variant="ghost">
-                                View Details
-                              </Button>
-                            </TableCell>
+                  {enquiriesLoading ? (
+                    <TableSkeleton cols={5} />
+                  ) : (
+                    <div className="overflow-hidden rounded-lg border border-border/50">
+                      <Table>
+                        <TableHeader className="bg-muted/30">
+                          <TableRow>
+                            <TableHead>ID</TableHead>
+                            <TableHead>Customer</TableHead>
+                            <TableHead>Product Spec</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead className="text-right">Action</TableHead>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
+                        </TableHeader>
+                        <TableBody>
+                          {enquiries.length > 0 ? (
+                            enquiries.map((enq) => (
+                              <TableRow key={enq.id}>
+                                <TableCell className="font-medium">
+                                  {enq.id}
+                                </TableCell>
+                                <TableCell>{enq.customer_id}</TableCell>
+                                <TableCell>{enq.product_spec}</TableCell>
+                                <TableCell>
+                                  <Badge variant="outline">{enq.status}</Badge>
+                                </TableCell>
+                                <TableCell className="flex justify-end gap-2 text-right">
+                                  {enq.status === "New" && (
+                                    <Button
+                                      size="sm"
+                                      onClick={() =>
+                                        handleFeasibilityCheck(Number(enq.id))
+                                      }
+                                    >
+                                      Run Feasibility
+                                    </Button>
+                                  )}
+                                  {enq.status === "Feasibility Approved" && (
+                                    <Button
+                                      size="sm"
+                                      className="bg-primary text-primary-foreground"
+                                      onClick={() =>
+                                        handleGenerateQuote(Number(enq.id))
+                                      }
+                                    >
+                                      Generate Quote
+                                    </Button>
+                                  )}
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleViewEnquiryDetails(enq)}
+                                  >
+                                    View Details
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          ) : (
+                            <TableRow>
+                              <TableCell
+                                colSpan={5}
+                                className="h-24 text-center text-muted-foreground"
+                              >
+                                No enquiries found.
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+
+                  {selectedEnquiry && (
+                    <div className="mt-4 rounded-lg border border-border/50 bg-muted/20 p-4">
+                      <div className="mb-3 flex items-center justify-between">
+                        <div>
+                          <h3 className="text-sm font-semibold text-foreground">
+                            Enquiry #{selectedEnquiry.id} Details
+                          </h3>
+                          <p className="text-xs text-muted-foreground">
+                            Order commitments and delivery tracking view.
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setSelectedEnquiry(null)}
+                        >
+                          Close
+                        </Button>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2 text-xs text-muted-foreground md:grid-cols-2">
+                        <div>
+                          <span className="font-medium text-foreground">
+                            Customer:
+                          </span>{" "}
+                          {selectedEnquiry.customer_id}
+                        </div>
+                        <div>
+                          <span className="font-medium text-foreground">
+                            Status:
+                          </span>{" "}
+                          {selectedEnquiry.status}
+                        </div>
+                        <div className="md:col-span-2">
+                          <span className="font-medium text-foreground">
+                            Product Spec:
+                          </span>{" "}
+                          {selectedEnquiry.product_spec}
+                        </div>
+                        <div>
+                          <span className="font-medium text-foreground">
+                            Quantity:
+                          </span>{" "}
+                          {selectedEnquiry.quantity ?? "—"}
+                        </div>
+                        <div>
+                          <span className="font-medium text-foreground">
+                            Created:
+                          </span>{" "}
+                          {selectedEnquiry.created_at
+                            ? new Date(selectedEnquiry.created_at).toLocaleString()
+                            : "—"}
+                        </div>
+                      </div>
+
+                      {enquiryDetailsLoading ? (
+                        <div className="mt-3 text-xs text-muted-foreground">
+                          Loading linked quotation, order, and shipment details...
+                        </div>
+                      ) : (
+                        <div className="mt-4 space-y-3">
+                          <div>
+                            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-foreground">
+                              Quotation Commitments
+                            </p>
+                            {selectedEnquiryQuotes.length > 0 ? (
+                              <div className="space-y-1 text-xs text-muted-foreground">
+                                {selectedEnquiryQuotes.map((quote) => (
+                                  <div
+                                    key={quote.quote_id}
+                                    className="flex flex-wrap gap-x-4 gap-y-1 rounded border border-border/40 bg-background/60 px-2 py-1"
+                                  >
+                                    <span>Quote #{quote.quote_id}</span>
+                                    <span>Version {quote.version_number}</span>
+                                    <span>${quote.price.toLocaleString()}</span>
+                                    <span>
+                                      ETA: {quote.est_delivery ?? "Not set"}
+                                    </span>
+                                    <span>
+                                      {quote.is_accepted
+                                        ? "Accepted"
+                                        : "Pending decision"}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">
+                                No quotations yet for this enquiry.
+                              </p>
+                            )}
+                          </div>
+
+                          <div>
+                            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-foreground">
+                              Order Commitments
+                            </p>
+                            {selectedEnquiryOrders.length > 0 ? (
+                              <div className="space-y-1 text-xs text-muted-foreground">
+                                {selectedEnquiryOrders.map((order) => (
+                                  <div
+                                    key={order.order_id}
+                                    className="flex flex-wrap gap-x-4 gap-y-1 rounded border border-border/40 bg-background/60 px-2 py-1"
+                                  >
+                                    <span>Order #{order.order_id}</span>
+                                    <span>Quote #{order.quote_id}</span>
+                                    <span>Status: {order.production_status}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">
+                                No confirmed orders linked yet.
+                              </p>
+                            )}
+                          </div>
+
+                          <div>
+                            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-foreground">
+                              Delivery Tracking
+                            </p>
+                            {selectedEnquiryShipments.length > 0 ? (
+                              <div className="space-y-1 text-xs text-muted-foreground">
+                                {selectedEnquiryShipments.map((shipment) => (
+                                  <div
+                                    key={shipment.shipment_id}
+                                    className="flex flex-wrap gap-x-4 gap-y-1 rounded border border-border/40 bg-background/60 px-2 py-1"
+                                  >
+                                    <span>Shipment #{shipment.shipment_id}</span>
+                                    <span>Order #{shipment.order_id}</span>
+                                    <span>Status: {shipment.status}</span>
+                                    <span>
+                                      Shipped: {shipment.shipped_date ?? "Pending"}
+                                    </span>
+                                    <span>Carrier: {shipment.carrier}</span>
+                                    <span>Tracking: {shipment.tracking_number}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">
+                                No shipment records for this enquiry yet.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {enquiryDetailsError && (
+                        <p className="mt-3 text-xs text-yellow-600 dark:text-yellow-400">
+                          {enquiryDetailsError}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -515,58 +832,73 @@ export function ManagerDashboard() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="overflow-hidden rounded-lg border border-border/50">
-                    <Table>
-                      <TableHeader className="bg-muted/30">
-                        <TableRow>
-                          <TableHead>Order ID</TableHead>
-                          <TableHead>Quote ID</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead className="text-right">Action</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {orders.map((order) => (
-                          <TableRow key={order.order_id}>
-                            <TableCell className="font-medium">
-                              {order.order_id}
-                            </TableCell>
-                            <TableCell>{order.quote_id}</TableCell>
-                            <TableCell>
-                              <Badge
-                                variant="outline"
-                                className="border-primary/20 bg-primary/5 text-primary"
-                              >
-                                {order.production_status}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {order.production_status.includes(
-                                "Ready for Billing"
-                              ) && (
-                                <Button
-                                  size="sm"
-                                  onClick={() =>
-                                    handleIssueInvoice(order.order_id)
-                                  }
-                                >
-                                  Issue Invoice
-                                </Button>
-                              )}
-                              {order.production_status.includes("Invoiced") && (
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleDispatch(order.order_id)}
-                                >
-                                  Dispatch
-                                </Button>
-                              )}
-                            </TableCell>
+                  {ordersLoading ? (
+                    <TableSkeleton cols={4} />
+                  ) : (
+                    <div className="overflow-hidden rounded-lg border border-border/50">
+                      <Table>
+                        <TableHeader className="bg-muted/30">
+                          <TableRow>
+                            <TableHead>Order ID</TableHead>
+                            <TableHead>Quote ID</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead className="text-right">Action</TableHead>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
+                        </TableHeader>
+                        <TableBody>
+                          {orders.length > 0 ? (
+                            orders.map((order) => (
+                              <TableRow key={order.order_id}>
+                                <TableCell className="font-medium">
+                                  {order.order_id}
+                                </TableCell>
+                                <TableCell>{order.quote_id}</TableCell>
+                                <TableCell>
+                                  <Badge
+                                    variant="outline"
+                                    className="border-primary/20 bg-primary/5 text-primary"
+                                  >
+                                    {order.production_status}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {order.production_status.includes(
+                                    "Ready for Billing"
+                                  ) && (
+                                    <Button
+                                      size="sm"
+                                      onClick={() =>
+                                        handleIssueInvoice(order.order_id)
+                                      }
+                                    >
+                                      Issue Invoice
+                                    </Button>
+                                  )}
+                                  {order.production_status.includes("Invoiced") && (
+                                    <Button
+                                      size="sm"
+                                      onClick={() => handleDispatch(order.order_id)}
+                                    >
+                                      Dispatch
+                                    </Button>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          ) : (
+                            <TableRow>
+                              <TableCell
+                                colSpan={4}
+                                className="h-24 text-center text-muted-foreground"
+                              >
+                                No orders found.
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -580,78 +912,93 @@ export function ManagerDashboard() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="overflow-hidden rounded-lg border border-border/50">
-                    <Table>
-                      <TableHeader className="bg-muted/30">
-                        <TableRow>
-                          <TableHead>Task ID</TableHead>
-                          <TableHead>Order ID</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Progress</TableHead>
-                          <TableHead className="text-right">Action</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {optimisticTasks.map((task) => (
-                          <TableRow key={task.id}>
-                            <TableCell className="font-medium">
-                              {task.id}
-                            </TableCell>
-                            <TableCell>{task.order_id}</TableCell>
-                            <TableCell>
-                              <Badge
-                                variant={
-                                  task.status === "In Progress"
-                                    ? "default"
-                                    : "secondary"
-                                }
-                              >
-                                {task.status}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-2">
-                                <div className="h-1.5 w-full max-w-[100px] rounded-full bg-secondary">
-                                  <div
-                                    className="h-full rounded-full bg-primary"
-                                    style={{ width: `${task.progress || 0}%` }}
-                                  />
-                                </div>
-                                <span className="text-xs">
-                                  {task.progress || 0}%
-                                </span>
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {task.status === "Scheduled" && (
-                                <Button
-                                  size="sm"
-                                  onClick={() =>
-                                    handleUpdateTaskStatus(
-                                      task.id,
-                                      "In Progress"
-                                    )
-                                  }
-                                >
-                                  Start
-                                </Button>
-                              )}
-                              {task.status === "In Progress" && (
-                                <Button
-                                  size="sm"
-                                  onClick={() =>
-                                    handleUpdateTaskStatus(task.id, "Completed")
-                                  }
-                                >
-                                  Complete
-                                </Button>
-                              )}
-                            </TableCell>
+                  {tasksLoading ? (
+                    <TableSkeleton cols={5} />
+                  ) : (
+                    <div className="overflow-hidden rounded-lg border border-border/50">
+                      <Table>
+                        <TableHeader className="bg-muted/30">
+                          <TableRow>
+                            <TableHead>Task ID</TableHead>
+                            <TableHead>Order ID</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Progress</TableHead>
+                            <TableHead className="text-right">Action</TableHead>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
+                        </TableHeader>
+                        <TableBody>
+                          {optimisticTasks.length > 0 ? (
+                            optimisticTasks.map((task) => (
+                              <TableRow key={task.id}>
+                                <TableCell className="font-medium">
+                                  {task.id}
+                                </TableCell>
+                                <TableCell>{task.order_id}</TableCell>
+                                <TableCell>
+                                  <Badge
+                                    variant={
+                                      task.status === "In Progress"
+                                        ? "default"
+                                        : "secondary"
+                                    }
+                                  >
+                                    {task.status}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>
+                                  <div className="flex items-center gap-2">
+                                    <div className="h-1.5 w-full max-w-[100px] rounded-full bg-secondary">
+                                      <div
+                                        className="h-full rounded-full bg-primary"
+                                        style={{ width: `${task.progress || 0}%` }}
+                                      />
+                                    </div>
+                                    <span className="text-xs">
+                                      {task.progress || 0}%
+                                    </span>
+                                  </div>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {task.status === "Scheduled" && (
+                                    <Button
+                                      size="sm"
+                                      onClick={() =>
+                                        handleUpdateTaskStatus(
+                                          task.id,
+                                          "In Progress"
+                                        )
+                                      }
+                                    >
+                                      Start
+                                    </Button>
+                                  )}
+                                  {task.status === "In Progress" && (
+                                    <Button
+                                      size="sm"
+                                      onClick={() =>
+                                        handleUpdateTaskStatus(task.id, "Completed")
+                                      }
+                                    >
+                                      Complete
+                                    </Button>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          ) : (
+                            <TableRow>
+                              <TableCell
+                                colSpan={5}
+                                className="h-24 text-center text-muted-foreground"
+                              >
+                                No production tasks found.
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -665,72 +1012,76 @@ export function ManagerDashboard() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="overflow-hidden rounded-lg border border-border/50">
-                    <Table>
-                      <TableHeader className="bg-muted/30">
-                        <TableRow>
-                          <TableHead>Task ID</TableHead>
-                          <TableHead>Order ID</TableHead>
-                          <TableHead>Result</TableHead>
-                          <TableHead className="text-right">Action</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {tasks
-                          .filter((t) => t.status === "Completed")
-                          .map((task) => (
-                            <TableRow key={task.id}>
-                              <TableCell className="font-medium">
-                                {task.id}
-                              </TableCell>
-                              <TableCell>{task.order_id}</TableCell>
-                              <TableCell>
-                                <Badge variant="outline">
-                                  Awaiting Inspection
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="flex justify-end gap-2 text-right">
-                                <Button
-                                  size="sm"
-                                  className="bg-emerald-600 hover:bg-emerald-700"
-                                  onClick={() =>
-                                    handleQualitySubmit(
-                                      Number(task.id),
-                                      "Approved"
-                                    )
-                                  }
-                                >
-                                  Approve
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="destructive"
-                                  onClick={() =>
-                                    handleQualitySubmit(
-                                      Number(task.id),
-                                      "Rejected"
-                                    )
-                                  }
-                                >
-                                  Reject
-                                </Button>
+                  {tasksLoading ? (
+                    <TableSkeleton cols={4} />
+                  ) : (
+                    <div className="overflow-hidden rounded-lg border border-border/50">
+                      <Table>
+                        <TableHeader className="bg-muted/30">
+                          <TableRow>
+                            <TableHead>Task ID</TableHead>
+                            <TableHead>Order ID</TableHead>
+                            <TableHead>Result</TableHead>
+                            <TableHead className="text-right">Action</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {tasks.filter((t) => t.status === "Completed").length > 0 ? (
+                            tasks
+                              .filter((t) => t.status === "Completed")
+                              .map((task) => (
+                                <TableRow key={task.id}>
+                                  <TableCell className="font-medium">
+                                    {task.id}
+                                  </TableCell>
+                                  <TableCell>{task.order_id}</TableCell>
+                                  <TableCell>
+                                    <Badge variant="outline">
+                                      Awaiting Inspection
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell className="flex justify-end gap-2 text-right">
+                                    <Button
+                                      size="sm"
+                                      className="bg-emerald-600 hover:bg-emerald-700"
+                                      onClick={() =>
+                                        handleQualitySubmit(
+                                          Number(task.id),
+                                          "Approved"
+                                        )
+                                      }
+                                    >
+                                      Approve
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="destructive"
+                                      onClick={() =>
+                                        handleQualitySubmit(
+                                          Number(task.id),
+                                          "Rejected"
+                                        )
+                                      }
+                                    >
+                                      Reject
+                                    </Button>
+                                  </TableCell>
+                                </TableRow>
+                              ))
+                          ) : (
+                            <TableRow>
+                              <TableCell
+                                colSpan={4}
+                                className="h-24 text-center text-muted-foreground"
+                              >
+                                No tasks pending inspection.
                               </TableCell>
                             </TableRow>
-                          ))}
-                        {tasks.filter((t) => t.status === "Completed")
-                          .length === 0 && (
-                          <TableRow>
-                            <TableCell
-                              colSpan={4}
-                              className="h-24 text-center text-muted-foreground"
-                            >
-                              No tasks pending inspection.
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </TableBody>
-                    </Table>
-                  </div>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -744,36 +1095,51 @@ export function ManagerDashboard() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="overflow-hidden rounded-lg border border-border/50">
-                    <Table>
-                      <TableHeader className="bg-muted/30">
-                        <TableRow>
-                          <TableHead>Shipment ID</TableHead>
-                          <TableHead>Order ID</TableHead>
-                          <TableHead>Carrier</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead className="text-right">Tracking</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {shipments.map((s) => (
-                          <TableRow key={s.shipment_id}>
-                            <TableCell className="font-medium">
-                              {s.shipment_id}
-                            </TableCell>
-                            <TableCell>{s.order_id}</TableCell>
-                            <TableCell>{s.carrier}</TableCell>
-                            <TableCell>
-                              <Badge variant="outline">{s.status}</Badge>
-                            </TableCell>
-                            <TableCell className="text-right font-mono text-xs">
-                              {s.tracking_number}
-                            </TableCell>
+                  {shipmentsLoading ? (
+                    <TableSkeleton cols={5} />
+                  ) : (
+                    <div className="overflow-hidden rounded-lg border border-border/50">
+                      <Table>
+                        <TableHeader className="bg-muted/30">
+                          <TableRow>
+                            <TableHead>Shipment ID</TableHead>
+                            <TableHead>Order ID</TableHead>
+                            <TableHead>Carrier</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead className="text-right">Tracking</TableHead>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
+                        </TableHeader>
+                        <TableBody>
+                          {shipments.length > 0 ? (
+                            shipments.map((s) => (
+                              <TableRow key={s.shipment_id}>
+                                <TableCell className="font-medium">
+                                  {s.shipment_id}
+                                </TableCell>
+                                <TableCell>{s.order_id}</TableCell>
+                                <TableCell>{s.carrier}</TableCell>
+                                <TableCell>
+                                  <Badge variant="outline">{s.status}</Badge>
+                                </TableCell>
+                                <TableCell className="text-right font-mono text-xs">
+                                  {s.tracking_number}
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          ) : (
+                            <TableRow>
+                              <TableCell
+                                colSpan={5}
+                                className="h-24 text-center text-muted-foreground"
+                              >
+                                No shipments found.
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -786,29 +1152,41 @@ export function ManagerDashboard() {
                     <CardDescription>Raw material stock.</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="overflow-hidden rounded-lg border border-border/50">
-                      <Table>
-                        <TableBody>
-                          {inventory.materials.map((m) => (
-                            <TableRow key={m.id}>
-                              <TableCell className="text-xs font-medium">
-                                {m.name}
-                              </TableCell>
-                              <TableCell className="text-right">
-                                <Badge
-                                  variant={
-                                    m.qty < 50 ? "destructive" : "outline"
-                                  }
-                                  className="text-[10px]"
-                                >
-                                  {m.qty}
-                                </Badge>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
+                    {inventoryLoading ? (
+                      <TableSkeleton cols={2} />
+                    ) : (
+                      <div className="overflow-hidden rounded-lg border border-border/50">
+                        <Table>
+                          <TableBody>
+                            {inventory.materials.length > 0 ? (
+                              inventory.materials.map((m) => (
+                                <TableRow key={m.id}>
+                                  <TableCell className="text-xs font-medium">
+                                    {m.name}
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    <Badge
+                                      variant={
+                                        m.qty < 50 ? "destructive" : "outline"
+                                      }
+                                      className="text-[10px]"
+                                    >
+                                      {m.qty}
+                                    </Badge>
+                                  </TableCell>
+                                </TableRow>
+                              ))
+                            ) : (
+                              <TableRow>
+                                <TableCell colSpan={2} className="h-24 text-center text-muted-foreground">
+                                  Empty
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
                 <Card className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl">
@@ -817,31 +1195,43 @@ export function ManagerDashboard() {
                     <CardDescription>Equipment status.</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="overflow-hidden rounded-lg border border-border/50">
-                      <Table>
-                        <TableBody>
-                          {inventory.machines.map((mac) => (
-                            <TableRow key={mac.id}>
-                              <TableCell className="text-xs font-medium">
-                                {mac.name}
-                              </TableCell>
-                              <TableCell className="text-right">
-                                <Badge
-                                  variant={
-                                    mac.status === "Operational"
-                                      ? "default"
-                                      : "secondary"
-                                  }
-                                  className="text-[10px]"
-                                >
-                                  {mac.status}
-                                </Badge>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
+                    {inventoryLoading ? (
+                      <TableSkeleton cols={2} />
+                    ) : (
+                      <div className="overflow-hidden rounded-lg border border-border/50">
+                        <Table>
+                          <TableBody>
+                            {inventory.machines.length > 0 ? (
+                              inventory.machines.map((mac) => (
+                                <TableRow key={mac.id}>
+                                  <TableCell className="text-xs font-medium">
+                                    {mac.name}
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    <Badge
+                                      variant={
+                                        mac.status === "Operational" || mac.status === "Active"
+                                          ? "default"
+                                          : "secondary"
+                                      }
+                                      className="text-[10px]"
+                                    >
+                                      {mac.status}
+                                    </Badge>
+                                  </TableCell>
+                                </TableRow>
+                              ))
+                            ) : (
+                              <TableRow>
+                                <TableCell colSpan={2} className="h-24 text-center text-muted-foreground">
+                                  Empty
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
                 <Card className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl">
@@ -850,27 +1240,252 @@ export function ManagerDashboard() {
                     <CardDescription>Completed products.</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="overflow-hidden rounded-lg border border-border/50">
-                      <Table>
-                        <TableBody>
-                          {inventory.finished_goods.map((fg) => (
-                            <TableRow key={fg.id}>
-                              <TableCell className="text-xs font-medium">
-                                {fg.part_number}
-                              </TableCell>
-                              <TableCell className="text-right">
-                                <Badge
-                                  variant="outline"
-                                  className="text-[10px]"
-                                >
-                                  {fg.qty} units
-                                </Badge>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
+                    {inventoryLoading ? (
+                      <TableSkeleton cols={2} />
+                    ) : (
+                      <div className="overflow-hidden rounded-lg border border-border/50">
+                        <Table>
+                          <TableBody>
+                            {inventory.finished_goods.length > 0 ? (
+                              inventory.finished_goods.map((fg) => (
+                                <TableRow key={fg.id}>
+                                  <TableCell className="text-xs font-medium">
+                                    {fg.part_number}
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[10px]"
+                                    >
+                                      {fg.qty} units
+                                    </Badge>
+                                  </TableCell>
+                                </TableRow>
+                              ))
+                            ) : (
+                              <TableRow>
+                                <TableCell colSpan={2} className="h-24 text-center text-muted-foreground">
+                                  Empty
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {activeTab === "forecasting" && (
+              <div className="flex flex-col gap-8">
+                {/* Machine Maintenance */}
+                <Card className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl">
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle>Machine Maintenance Tracker</CardTitle>
+                        <CardDescription>
+                          Predictive maintenance based on production usage.
+                        </CardDescription>
+                      </div>
+                      <Wrench className="h-5 w-5 text-muted-foreground" />
                     </div>
+                  </CardHeader>
+                  <CardContent>
+                    {maintenanceLoading ? (
+                      <TableSkeleton cols={6} />
+                    ) : (
+                      <div className="overflow-hidden rounded-lg border border-border/50">
+                        <Table>
+                          <TableHeader className="bg-muted/30">
+                            <TableRow>
+                              <TableHead>Machine</TableHead>
+                              <TableHead>Usage (Springs)</TableHead>
+                              <TableHead>Capacity</TableHead>
+                              <TableHead>Severity</TableHead>
+                              <TableHead>Next Service (Est)</TableHead>
+                              <TableHead className="text-right">Action</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {maintenance.length > 0 ? (
+                              maintenance.map((m) => (
+                                <TableRow key={m.machine_id}>
+                                  <TableCell>
+                                    <div className="font-medium">{m.name}</div>
+                                    <div className="text-[10px] text-muted-foreground">
+                                      {m.type}
+                                    </div>
+                                  </TableCell>
+                                  <TableCell>
+                                    {m.usage_since_maintenance.toLocaleString()}
+                                  </TableCell>
+                                  <TableCell>
+                                    <div className="flex w-full flex-col gap-1">
+                                      <div className="h-1.5 w-full rounded-full bg-secondary">
+                                        <div
+                                          className={cn(
+                                            "h-full rounded-full",
+                                            m.severity === "critical"
+                                              ? "bg-destructive"
+                                              : m.severity === "warning"
+                                              ? "bg-yellow-500"
+                                              : "bg-emerald-500"
+                                          )}
+                                          style={{
+                                            width: `${m.utilization_percent}%`,
+                                          }}
+                                        />
+                                      </div>
+                                      <span className="text-[10px] text-muted-foreground">
+                                        {m.utilization_percent}% utilized
+                                      </span>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell>
+                                    <Badge
+                                      variant={
+                                        m.severity === "critical"
+                                          ? "destructive"
+                                          : m.severity === "warning"
+                                          ? "secondary"
+                                          : "outline"
+                                      }
+                                      className={cn(
+                                        "text-[10px] capitalize",
+                                        m.severity === "warning" &&
+                                          "border-yellow-500/50 bg-yellow-500/10 text-yellow-600"
+                                      )}
+                                    >
+                                      {m.severity}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell className="text-xs">
+                                    {m.scheduled_maintenance_at
+                                      ? new Date(
+                                          m.scheduled_maintenance_at
+                                        ).toLocaleDateString()
+                                      : "—"}
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 text-[10px]"
+                                      onClick={() =>
+                                        handleMaintenanceRecord(m.machine_id)
+                                      }
+                                    >
+                                      Record Service
+                                    </Button>
+                                  </TableCell>
+                                </TableRow>
+                              ))
+                            ) : (
+                              <TableRow>
+                                <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                                  No machine data available.
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Raw Material Forecast */}
+                <Card className="border-border/40 bg-background/60 shadow-sm backdrop-blur-xl">
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle>Raw Material Forecasting</CardTitle>
+                        <CardDescription>
+                          Projected requirements for the next{" "}
+                          {forecast?.parameters.horizon_days ?? 30} days.
+                        </CardDescription>
+                      </div>
+                      <AlertTriangle className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {forecastLoading ? (
+                      <TableSkeleton cols={6} />
+                    ) : (
+                      <div className="overflow-hidden rounded-lg border border-border/50">
+                        <Table>
+                          <TableHeader className="bg-muted/30">
+                            <TableRow>
+                              <TableHead>Material</TableHead>
+                              <TableHead>Stock (kg)</TableHead>
+                              <TableHead>Required (kg)</TableHead>
+                              <TableHead>Projected (kg)</TableHead>
+                              <TableHead>Status</TableHead>
+                              <TableHead className="text-right">
+                                Recommendation
+                              </TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {forecast?.materials && forecast.materials.length > 0 ? (
+                              forecast.materials.map((mat) => (
+                                <TableRow key={mat.material_id}>
+                                  <TableCell className="font-medium">
+                                    {mat.material_name}
+                                  </TableCell>
+                                  <TableCell>{mat.current_stock_kg}</TableCell>
+                                  <TableCell>{mat.forecast_required_kg}</TableCell>
+                                  <TableCell
+                                    className={cn(
+                                      mat.projected_stock_kg < 0 &&
+                                        "font-bold text-destructive"
+                                    )}
+                                  >
+                                    {mat.projected_stock_kg}
+                                  </TableCell>
+                                  <TableCell>
+                                    <Badge
+                                      variant={
+                                        mat.status === "critical"
+                                          ? "destructive"
+                                          : "outline"
+                                      }
+                                      className={cn(
+                                        "text-[10px] capitalize",
+                                        mat.status === "warning" &&
+                                          "border-yellow-500/50 bg-yellow-500/10 text-yellow-600"
+                                      )}
+                                    >
+                                      {mat.status}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    {mat.recommended_purchase_kg > 0 ? (
+                                      <span className="text-xs font-semibold text-primary">
+                                        Buy {mat.recommended_purchase_kg} kg
+                                      </span>
+                                    ) : (
+                                      <span className="text-xs text-muted-foreground">
+                                        Stock Sufficient
+                                      </span>
+                                    )}
+                                  </TableCell>
+                                </TableRow>
+                              ))
+                            ) : (
+                              <TableRow>
+                                <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                                  No forecast data available.
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </div>

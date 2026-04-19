@@ -78,14 +78,24 @@ def client():
 
 @pytest.fixture
 def init_database():
-    """Populates the database with necessary baseline data to support all 16 tests."""
+    """Populates the database with necessary baseline data to support all tests."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    
     customer = User(
         name="Acme Corp", email="contact@acme.com", company_name="Acme Tractors", role="customer"
     )
     customer.set_password("TestPassword123!")
     spring = Spring(part_number="SP-100", wire_diameter=2.0)
     material = Material(name="Steel Wire", stock_quantity=100.0)
-    machine = Machine(name="Coiler 1", type="Coiling", status="Active")
+    machine = Machine(
+        name="Coiler 1", 
+        type="Coiling", 
+        status="Active",
+        maintenance_threshold=10000,
+        maintenance_warning_threshold=8000,
+        last_maintenance_at=now - timedelta(days=30)
+    )
     db.session.add_all([customer, spring, material, machine])
     db.session.commit()
 
@@ -119,4 +129,18 @@ def init_database():
     # Shipment ready for Delivery (Shipment 1)
     shipment = Shipment(order_id=order2.order_id, carrier="FedEx", tracking_number="TRK123")
     db.session.add(shipment)
+    db.session.commit()
+
+    # Add a completed task for forecasting tests
+    from models import ProductionTask
+    completed_task = ProductionTask(
+        order_id=order1.order_id,
+        machine_id=machine.machine_id,
+        material_id=material.material_id,
+        status="Completed",
+        estimated_springs_produced=5000,
+        completed_at=now - timedelta(days=5),
+        scheduled_at=now - timedelta(days=6)
+    )
+    db.session.add(completed_task)
     db.session.commit()
