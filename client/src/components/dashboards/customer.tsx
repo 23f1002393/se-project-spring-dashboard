@@ -1,4 +1,5 @@
 import {
+  type FormEvent,
   useState,
   useEffect,
   useOptimistic,
@@ -25,6 +26,8 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -35,10 +38,12 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { getEnquiries, updateEnquiry } from "@/lib/actions/enquiries";
+import { createEnquiry, getEnquiries, updateEnquiry } from "@/lib/actions/enquiries";
 import { getTasks } from "@/lib/actions/tasks";
 import { acceptQuotation } from "@/lib/actions/quotations";
+import { createOrder } from "@/lib/actions/orders";
 import { getShipments, updateDelivery, type Shipment } from "@/lib/actions/shipments";
+import { useAppSelector } from "@/lib/hooks";
 
 // --- Skeleton Components ---
 
@@ -148,6 +153,21 @@ async function fetchShipments(): Promise<Shipment[]> {
 
 export function CustomerDashboard() {
   const [activeTab, setActiveTab] = useState("quotations");
+  const user = useAppSelector((state) => state.user.user) as
+    | { user_id?: number; name?: string; role?: string }
+    | null;
+
+  const [quotationProductSpec, setQuotationProductSpec] = useState("");
+  const [quotationQuantity, setQuotationQuantity] = useState("");
+  const [quotationSubmitLoading, setQuotationSubmitLoading] = useState(false);
+  const [quotationSubmitError, setQuotationSubmitError] = useState<string | null>(null);
+  const [quotationSubmitSuccess, setQuotationSubmitSuccess] = useState<string | null>(null);
+
+  const [newOrderQuoteId, setNewOrderQuoteId] = useState("");
+  const [newOrderSpringId, setNewOrderSpringId] = useState("");
+  const [createOrderLoading, setCreateOrderLoading] = useState(false);
+  const [createOrderError, setCreateOrderError] = useState<string | null>(null);
+  const [createOrderSuccess, setCreateOrderSuccess] = useState<string | null>(null);
 
   // useActionState for each data source
   const [quotations, loadQuotations, quotationsLoading] = useActionState(
@@ -210,6 +230,94 @@ export function CustomerDashboard() {
       loadDeliveries();
     } catch (err) {
       console.error("Failed to confirm delivery", err);
+    }
+  };
+
+  const handleCreateOrder = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setCreateOrderError(null);
+    setCreateOrderSuccess(null);
+
+    const quoteId = Number(newOrderQuoteId);
+    const springId = Number(newOrderSpringId);
+
+    if (!Number.isInteger(quoteId) || quoteId <= 0) {
+      setCreateOrderError("Please enter a valid Quote ID.");
+      return;
+    }
+    if (!Number.isInteger(springId) || springId <= 0) {
+      setCreateOrderError("Please enter a valid Spring ID.");
+      return;
+    }
+
+    setCreateOrderLoading(true);
+    try {
+      const created = await createOrder({
+        quote_id: quoteId,
+        spring_id: springId,
+        production_status: "Pending",
+      });
+      setCreateOrderSuccess(`Order #${created.order_id} created successfully.`);
+      setNewOrderQuoteId("");
+      setNewOrderSpringId("");
+      startTransition(() => {
+        loadOrders();
+      });
+    } catch (err) {
+      setCreateOrderError(
+        err instanceof Error ? err.message : "Failed to create order."
+      );
+    } finally {
+      setCreateOrderLoading(false);
+    }
+  };
+
+  const handleRequestQuotation = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setQuotationSubmitError(null);
+    setQuotationSubmitSuccess(null);
+
+    if (!user?.user_id) {
+      setQuotationSubmitError("Please log in again to submit a quotation request.");
+      return;
+    }
+
+    if (!quotationProductSpec.trim()) {
+      setQuotationSubmitError("Product specification is required.");
+      return;
+    }
+
+    const quantity = Number(quotationQuantity);
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      setQuotationSubmitError("Please enter a valid quantity.");
+      return;
+    }
+
+    setQuotationSubmitLoading(true);
+    try {
+      const created = await createEnquiry({
+        customer_id: user.user_id,
+        product_spec: quotationProductSpec.trim(),
+        quantity,
+      });
+
+      const enquiryId = (created as { enquiry_id?: number }).enquiry_id;
+      setQuotationSubmitSuccess(
+        enquiryId
+          ? `Quotation request submitted as Enquiry #${enquiryId}.`
+          : "Quotation request submitted successfully."
+      );
+      setQuotationProductSpec("");
+      setQuotationQuantity("");
+      startTransition(() => {
+        loadQuotations();
+      });
+    } catch (err) {
+      setQuotationSubmitError(
+        err instanceof Error ? err.message : "Failed to submit quotation request."
+      );
+    } finally {
+      setQuotationSubmitLoading(false);
     }
   };
 
@@ -293,7 +401,7 @@ export function CustomerDashboard() {
       )}
 
       {/* Tabs Navigation */}
-      <div className="scrollbar-hide flex overflow-x-auto border-b border-border/50 pb-[1px]">
+      <div className="scrollbar-hide flex overflow-x-auto border-b border-border/50 pb-px">
         {TABS.map((tab) => {
           const isActive = activeTab === tab.id;
           return (
@@ -344,46 +452,97 @@ export function CustomerDashboard() {
                   {quotationsLoading ? (
                     <TableSkeleton cols={6} />
                   ) : (
-                    <div className="overflow-hidden rounded-lg border border-border/50">
-                      <Table>
-                        <TableHeader className="bg-muted/30">
-                          <TableRow>
-                            <TableHead className="font-medium">Quote ID</TableHead>
-                            <TableHead className="font-medium">Product</TableHead>
-                            <TableHead className="font-medium">Amount</TableHead>
-                            <TableHead className="font-medium">Date</TableHead>
-                            <TableHead className="font-medium">Status</TableHead>
-                            <TableHead className="text-right font-medium">Actions</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {optimisticQuotations.map((qt) => (
-                            <TableRow key={qt.id} className="transition-colors hover:bg-muted/20">
-                              <TableCell className="font-medium">{qt.id}</TableCell>
-                              <TableCell>{qt.product}</TableCell>
-                              <TableCell>{qt.amount}</TableCell>
-                              <TableCell>{qt.date}</TableCell>
-                              <TableCell>
-                                <Badge variant={qt.status === "Approved" ? "default" : qt.status === "Rejected" ? "destructive" : "secondary"}>
-                                  {qt.status}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="text-right">
-                                {qt.status === "Quoted" && (
-                                  <div className="flex items-center justify-end gap-2">
-                                    <Button size="sm" variant="outline" className="border-emerald-200 text-emerald-600 hover:bg-emerald-50" onClick={() => handleApprove(qt.id)}>
-                                      <CheckCircle className="mr-1 h-3 w-3" /> Approve
-                                    </Button>
-                                    <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10" onClick={() => handleReject(qt.id)}>
-                                      <XCircle className="mr-1 h-3 w-3" /> Reject
-                                    </Button>
-                                  </div>
-                                )}
-                              </TableCell>
+                    <div className="space-y-6">
+                      <div className="overflow-hidden rounded-lg border border-border/50">
+                        <Table>
+                          <TableHeader className="bg-muted/30">
+                            <TableRow>
+                              <TableHead className="font-medium">Quote ID</TableHead>
+                              <TableHead className="font-medium">Product</TableHead>
+                              <TableHead className="font-medium">Amount</TableHead>
+                              <TableHead className="font-medium">Date</TableHead>
+                              <TableHead className="font-medium">Status</TableHead>
+                              <TableHead className="text-right font-medium">Actions</TableHead>
                             </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
+                          </TableHeader>
+                          <TableBody>
+                            {optimisticQuotations.map((qt) => (
+                              <TableRow key={qt.id} className="transition-colors hover:bg-muted/20">
+                                <TableCell className="font-medium">{qt.id}</TableCell>
+                                <TableCell>{qt.product}</TableCell>
+                                <TableCell>{qt.amount}</TableCell>
+                                <TableCell>{qt.date}</TableCell>
+                                <TableCell>
+                                  <Badge variant={qt.status === "Approved" ? "default" : qt.status === "Rejected" ? "destructive" : "secondary"}>
+                                    {qt.status}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {qt.status === "Quoted" && (
+                                    <div className="flex items-center justify-end gap-2">
+                                      <Button size="sm" variant="outline" className="border-emerald-200 text-emerald-600 hover:bg-emerald-50" onClick={() => handleApprove(qt.id)}>
+                                        <CheckCircle className="mr-1 h-3 w-3" /> Approve
+                                      </Button>
+                                      <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10" onClick={() => handleReject(qt.id)}>
+                                        <XCircle className="mr-1 h-3 w-3" /> Reject
+                                      </Button>
+                                    </div>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+
+                      <div className="rounded-lg border border-border/50 bg-muted/20 p-4">
+                        <h3 className="text-sm font-semibold">Request New Quotation</h3>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Submit product details for Spring Master review and quotation approval.
+                        </p>
+
+                        <form className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2" onSubmit={handleRequestQuotation}>
+                          <div className="space-y-1.5 md:col-span-2">
+                            <Label htmlFor="quotation-product-spec">Product Specification</Label>
+                            <Input
+                              id="quotation-product-spec"
+                              type="text"
+                              value={quotationProductSpec}
+                              onChange={(e) => setQuotationProductSpec(e.target.value)}
+                              placeholder="Compression spring, SS304, 2.5mm wire"
+                              required
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <Label htmlFor="quotation-quantity">Quantity</Label>
+                            <Input
+                              id="quotation-quantity"
+                              type="number"
+                              min={1}
+                              value={quotationQuantity}
+                              onChange={(e) => setQuotationQuantity(e.target.value)}
+                              placeholder="e.g. 500"
+                              required
+                            />
+                          </div>
+
+                          <div className="flex items-end justify-start md:justify-end">
+                            <Button type="submit" disabled={quotationSubmitLoading}>
+                              {quotationSubmitLoading ? "Submitting..." : "Submit Request"}
+                            </Button>
+                          </div>
+
+                          <div className="md:col-span-2 text-sm">
+                            {quotationSubmitError && (
+                              <p className="text-destructive">{quotationSubmitError}</p>
+                            )}
+                            {quotationSubmitSuccess && (
+                              <p className="text-emerald-600">{quotationSubmitSuccess}</p>
+                            )}
+                          </div>
+                        </form>
+                      </div>
                     </div>
                   )}
                 </CardContent>
@@ -400,31 +559,83 @@ export function CustomerDashboard() {
                   {ordersLoading ? (
                     <TableSkeleton cols={4} />
                   ) : (
-                    <div className="overflow-hidden rounded-lg border border-border/50">
-                      <Table>
-                        <TableHeader className="bg-muted/30">
-                          <TableRow>
-                            <TableHead className="font-medium">Order ID</TableHead>
-                            <TableHead className="font-medium">Product</TableHead>
-                            <TableHead className="font-medium">Status</TableHead>
-                            <TableHead className="text-right font-medium">Expected Delivery</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {orders.map((order) => (
-                            <TableRow key={order.id} className="transition-colors hover:bg-muted/20">
-                              <TableCell className="font-medium">{order.orderId}</TableCell>
-                              <TableCell>{order.product}</TableCell>
-                              <TableCell>
-                                <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
-                                  <Clock className="mr-1 h-3 w-3" /> {order.status}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="text-right text-muted-foreground">{order.expectedDelivery}</TableCell>
+                    <div className="space-y-6">
+                      <div className="overflow-hidden rounded-lg border border-border/50">
+                        <Table>
+                          <TableHeader className="bg-muted/30">
+                            <TableRow>
+                              <TableHead className="font-medium">Order ID</TableHead>
+                              <TableHead className="font-medium">Product</TableHead>
+                              <TableHead className="font-medium">Status</TableHead>
+                              <TableHead className="text-right font-medium">Expected Delivery</TableHead>
                             </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
+                          </TableHeader>
+                          <TableBody>
+                            {orders.map((order) => (
+                              <TableRow key={order.id} className="transition-colors hover:bg-muted/20">
+                                <TableCell className="font-medium">{order.orderId}</TableCell>
+                                <TableCell>{order.product}</TableCell>
+                                <TableCell>
+                                  <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
+                                    <Clock className="mr-1 h-3 w-3" /> {order.status}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-right text-muted-foreground">{order.expectedDelivery}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+
+                      <div className="rounded-lg border border-border/50 bg-muted/20 p-4">
+                        <h3 className="text-sm font-semibold">Create New Order</h3>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Enter an existing quote and spring to create a production order.
+                        </p>
+
+                        <form className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2" onSubmit={handleCreateOrder}>
+                          <div className="space-y-1.5">
+                            <Label htmlFor="new-order-quote-id">Quote ID</Label>
+                            <Input
+                              id="new-order-quote-id"
+                              type="number"
+                              min={1}
+                              value={newOrderQuoteId}
+                              onChange={(e) => setNewOrderQuoteId(e.target.value)}
+                              placeholder="e.g. 1"
+                              required
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <Label htmlFor="new-order-spring-id">Spring ID</Label>
+                            <Input
+                              id="new-order-spring-id"
+                              type="number"
+                              min={1}
+                              value={newOrderSpringId}
+                              onChange={(e) => setNewOrderSpringId(e.target.value)}
+                              placeholder="e.g. 1"
+                              required
+                            />
+                          </div>
+
+                          <div className="md:col-span-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="text-sm">
+                              {createOrderError && (
+                                <p className="text-destructive">{createOrderError}</p>
+                              )}
+                              {createOrderSuccess && (
+                                <p className="text-emerald-600">{createOrderSuccess}</p>
+                              )}
+                            </div>
+
+                            <Button type="submit" disabled={createOrderLoading}>
+                              {createOrderLoading ? "Creating..." : "Create Order"}
+                            </Button>
+                          </div>
+                        </form>
+                      </div>
                     </div>
                   )}
                 </CardContent>

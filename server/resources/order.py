@@ -1,5 +1,6 @@
+from flask import request
 from flask_restful import Resource
-from models import Order, db
+from models import Order, Quotation, Spring, db
 from utils import error_response
 
 class OrderListAPI(Resource):
@@ -23,6 +24,69 @@ class OrderListAPI(Resource):
             }
             for o in orders
         ], 200
+
+    def post(self):
+        """
+        Create a new production order
+        ---
+        tags:
+          - Orders
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              required:
+                - quote_id
+                - spring_id
+              properties:
+                quote_id:
+                  type: integer
+                spring_id:
+                  type: integer
+                production_status:
+                  type: string
+        responses:
+          201:
+            description: Order created successfully
+          400:
+            description: Invalid payload
+          404:
+            description: Related entity not found
+        """
+        data = request.get_json() or {}
+        quote_id = data.get("quote_id")
+        spring_id = data.get("spring_id")
+
+        if quote_id is None:
+            return error_response(400, "quote_id is required")
+        if spring_id is None:
+            return error_response(400, "spring_id is required")
+
+        quote = db.session.get(Quotation, quote_id)
+        if not quote:
+            return error_response(404, f"Quotation ID {quote_id} not found.")
+
+        spring = db.session.get(Spring, spring_id)
+        if not spring:
+            return error_response(404, f"Spring ID {spring_id} not found.")
+
+        new_order = Order(
+            quote_id=quote_id,
+            spring_id=spring_id,
+            production_status=data.get("production_status", "Pending"),
+        )
+        db.session.add(new_order)
+        db.session.commit()
+
+        return {
+            "message": "Order created successfully",
+            "order_id": new_order.order_id,
+            "quote_id": new_order.quote_id,
+            "spring_id": new_order.spring_id,
+            "production_status": new_order.production_status,
+        }, 201
 
 class OrderDetailAPI(Resource):
     def get(self, order_id):
